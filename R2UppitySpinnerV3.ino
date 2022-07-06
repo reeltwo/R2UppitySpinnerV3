@@ -8,6 +8,7 @@
 #include "core/SetupEvent.h"
 #include "core/AnimatedEvent.h"
 #include "analogWrite.h"
+#include "encoder/PPMReader.h"
 //#include "core/Enthropy.h"
 #include "Wire.h"
 #include "PCF8574.h"
@@ -39,6 +40,7 @@
 #define ROTARY_THROTTLE_DECELERATION_SCALE  20
 #define ROTARY_THROTTLE_LATENCY             25
 #define ROTARY_FUDGE_POSITION               5
+#define EEPROM_SIZE                         4096
 
 // Default random duration of 'M' movement mode
 #define MOVEMODE_MIN_DURATION               30      // minimum 30 seconds
@@ -108,6 +110,8 @@
 #define PIN_ROTARY_PWM2        26
 #define PIN_ROTARY_DIAG        39
 
+#define PIN_GPIO_INTERRUPT     17
+
 // TODO GPIO EXPANDER
 #define EPIN_ROTARY_LIMIT       0  //  1
 #define EPIN_LIGHTKIT_A         1  //  2
@@ -154,11 +158,11 @@ StatusLED statusLED;
 
 ///////////////////////////////////
 
-#include <EEPROM.h>
+#include "drive/TargetSteering.h"
 
 ///////////////////////////////////
 
-#include "drive/TargetSteering.h"
+#include "core/EEPROMSettings.h"
 
 ///////////////////////////////////
 #define ENCODER_STATUS_RATE 200 // ms (10Hz)
@@ -169,25 +173,46 @@ struct OutputLimit
     unsigned outputLimit;
 };
 
-OutputLimit sUpLimits[100/5+1];
-OutputLimit sDownLimits[100/5+1];
-unsigned sMinimumPower;
-unsigned sLifterDistance = LIFTER_DISTANCE;
-bool sUpLimitsCalibrated;
-bool sDownLimitsCalibrated;
-bool sSafetyManeuver;
-bool sCalibrating;
-bool sDisableRotary;
-uint32_t sBaudRate = SERIAL_BAUD_RATE;
-unsigned sRotaryCircleEncoderCount;
+struct LifterSettings
+{
+    OutputLimit fUpLimits[100/5+1];
+    OutputLimit fDownLimits[sizeof(fUpLimits)/sizeof(fUpLimits[0])];
+    unsigned fMinimumPower;
+    unsigned fLifterDistance = LIFTER_DISTANCE;
+    union
+    {
+        struct
+        {
+            bool fLifterLimitSetting:1;
+            bool fRotaryLimitSetting:1;
+            bool fUpLimitsCalibrated:1;
+            bool fDownLimitsCalibrated:1;
+            bool fSafetyManeuver:1;
+            bool fDisableRotary:1;
+        };
+        uint8_t fFlags;
+    };
+    uint32_t fBaudRate = SERIAL_BAUD_RATE;
 
-static bool sNextCommand;
-static bool sProcessing;
+    static constexpr size_t limitCount()
+    {
+        return sizeof(fUpLimits)/sizeof(fUpLimits[0]);
+    }
+};
+EEPROMSettings<LifterSettings> sSettings;
+
+static bool sCalibrating;
+static bool sSafetyManeuver;
+static unsigned sRotaryCircleEncoderCount;
+
 static unsigned sPos;
+static bool sProcessing;
+static bool sNextCommand;
 static uint32_t sWaitNextSerialCommand;
 static char sBuffer[CONSOLE_BUFFER_SIZE];
 static bool sCmdNextCommand;
 static char sCmdBuffer[COMMAND_BUFFER_SIZE];
+static bool sRCMode;
 
 static void runSerialCommand()
 {
@@ -276,7 +301,15 @@ void unmountFileSystems()
 
 /////////////////////////////////////////////////////////////////////////
 
-PCF8574 sGPIOExpander(0x20);
+static volatile bool sDigitalReadAll;
+
+static void IRAM_ATTR flagDigitalReadAll()
+{
+    sDigitalReadAll = true;
+}
+
+PCF8574 sGPIOExpander(0x20, PIN_GPIO_INTERRUPT, flagDigitalReadAll);
+PPMReader sPPM(PIN_PPMIN_RC, 6);
 
 void scan_i2c()
 {
@@ -437,13 +470,13 @@ public:
 
     static bool lifterTopLimit()
     {
-        bool limit = (getExpanderPin(EPIN_LIFTER_TOPLIMIT) == fLifterLimitSetting);
+        bool limit = (getExpanderPin(EPIN_LIFTER_TOPLIMIT) == sSettings.fLifterLimitSetting);
         return limit;
     }
 
     static bool lifterBottomLimit()
     {
-        bool limit = (getExpanderPin(EPIN_LIFTER_BOTLIMIT) == fLifterLimitSetting);
+        bool limit = (getExpanderPin(EPIN_LIFTER_BOTLIMIT) == sSettings.fLifterLimitSetting);
         return limit;
     }
 
@@ -464,7 +497,7 @@ public:
         // No rotary unit. Always in home position
         return true;
     #else
-        bool limit = sDisableRotary || (getExpanderPin(EPIN_ROTARY_LIMIT) == fRotaryLimitSetting);
+        bool limit = sSettings.fDisableRotary || (getExpanderPin(EPIN_ROTARY_LIMIT) == sSettings.fRotaryLimitSetting);
         return limit;
     #endif
     }
@@ -623,10 +656,10 @@ public:
             // Cannot go below 50% if spinning or not at home position
             pos = min(max(pos, 0.5f), 1.0f);
         }
-        if (speed * 100 < sMinimumPower)
-            return seekToPositionSlow(pos, speed/(sMinimumPower/100.0));
+        if (speed * 100 < sSettings.fMinimumPower)
+            return seekToPositionSlow(pos, speed/(sSettings.fMinimumPower/100.0));
 
-        long maxlen = sLifterDistance;
+        long maxlen = sSettings.fLifterDistance;
         long current = getLifterPosition();
         long target_ticks = pos * maxlen;
 
@@ -657,7 +690,7 @@ public:
 
                 if (!lifterStatus.isMoving())
                 {
-                    DEBUG_PRINTLN(F("ABORT"));
+                    DEBUG_PRINTLN("ABORT");
                     break;
                 }
             }
@@ -682,7 +715,7 @@ public:
 
                 if (!lifterStatus.isMoving())
                 {
-                    DEBUG_PRINTLN(F("ABORT"));
+                    DEBUG_PRINTLN("ABORT");
                     break;
                 }
             }
@@ -702,7 +735,7 @@ public:
         // Rotary motion not allowed
         return false;
     #else
-        return !sDisableRotary && (getLifterPosition() > ROTARY_MINIMUM_HEIGHT);
+        return !sSettings.fDisableRotary && (getLifterPosition() > ROTARY_MINIMUM_HEIGHT);
     #endif
     }
 
@@ -716,7 +749,7 @@ public:
     static void rotaryMotorUpdate()
     {
     #ifndef DISABLE_ROTARY
-        if (sDisableRotary)
+        if (sSettings.fDisableRotary)
             return;
         uint32_t currentMillis = millis();
         if (currentMillis - fRotaryThrottleUpdate > ROTARY_THROTTLE_LATENCY)
@@ -752,7 +785,7 @@ public:
                     fRotaryEncoderLastStatus = millis();
                     if (fRotaryEncoderLastTick == encoder_ticks)
                     {
-                        DEBUG_PRINTLN(F("ROTARY NOT MOVING - ABORT"));
+                        DEBUG_PRINTLN("ROTARY NOT MOVING - ABORT");
                         rotaryMotorStop();
                     }
                     fRotaryEncoderLastTick = encoder_ticks;
@@ -766,7 +799,7 @@ public:
     static void rotaryMotorMove(float throttle)
     {
     #ifndef DISABLE_ROTARY
-        if (sDisableRotary)
+        if (sSettings.fDisableRotary)
             return;
         bool reverse = (throttle < 0);
         throttle = min(max(abs(throttle), 0.0f), 1.0f);
@@ -796,7 +829,7 @@ public:
         }
         else
         {
-            DEBUG_PRINT(F("ROTARY NOT ALLOWED: "));
+            DEBUG_PRINT("ROTARY NOT ALLOWED: ");
             DEBUG_PRINTLN(getLifterPosition());
         }
     #endif
@@ -839,33 +872,33 @@ public:
     static bool moveScopeToTarget(int pos, int target, int fudge, float speed, float maxspeed, float &m)
     {
     #ifndef DISABLE_ROTARY
-        if (sDisableRotary)
+        if (sSettings.fDisableRotary)
             return true;
-        DEBUG_PRINT(F("MOVE raw=")); DEBUG_PRINT(getRotaryPosition());
-        DEBUG_PRINT(F(" pos=")); DEBUG_PRINT(pos);
-        DEBUG_PRINT(F(" target=")); DEBUG_PRINT(target);
+        DEBUG_PRINT("MOVE raw="); DEBUG_PRINT(getRotaryPosition());
+        DEBUG_PRINT(" pos="); DEBUG_PRINT(pos);
+        DEBUG_PRINT(" target="); DEBUG_PRINT(target);
         if (!withinArc(target - fudge, target + fudge, pos))
         {
             int dist = shortestDistance(pos, target);
-            DEBUG_PRINT(F(" dist=")); DEBUG_PRINT(dist);
+            DEBUG_PRINT(" dist="); DEBUG_PRINT(dist);
             if (maxspeed > speed && abs(dist) > fudge*2)
                 speed += (maxspeed - speed) * float(abs(dist)) / 180;
-            DEBUG_PRINT(F(" speed1=")); DEBUG_PRINT(speed);
+            DEBUG_PRINT(" speed1="); DEBUG_PRINT(speed);
             if (speed < (ROTARY_MINIMUM_POWER/100.0))
                 speed = (ROTARY_MINIMUM_POWER/100.0);
-            DEBUG_PRINT(F(" speed2=")); DEBUG_PRINT(speed);
+            DEBUG_PRINT(" speed2="); DEBUG_PRINT(speed);
             float nm = (dist > 0) ? -speed : speed;
             if (m != 0 && ((m < 0 && nm > 0) || (m > 0 && nm < 0)))
             {
                 // Safety check: In case of problems with the rotary encoder. If our
                 // direction changes from the initial direction we will just stop.
-                DEBUG_PRINTLN(F("DIRECTION CHANGE"));
+                DEBUG_PRINTLN("DIRECTION CHANGE");
                 DEBUG_PRINTLN(m);
                 DEBUG_PRINTLN(nm);
                 return true;
             }
             m = nm;
-            DEBUG_PRINT(F(" m=")); DEBUG_PRINTLN(m);
+            DEBUG_PRINT(" m="); DEBUG_PRINTLN(m);
             return false;
         }
         DEBUG_PRINTLN();
@@ -881,7 +914,7 @@ public:
     static void rotaryMotorAbsolutePosition(int degrees, float speed = 0, float maxspeed = 0)
     {
     #ifndef DISABLE_ROTARY
-        if (sDisableRotary)
+        if (sSettings.fDisableRotary)
             return;
         float m = 0;
         if (speed == 0)
@@ -895,7 +928,7 @@ public:
             rotaryMotorMove(m);
             if (!rotaryStatus.isMoving())
             {
-                DEBUG_PRINTLN(F("ABORT"));
+                DEBUG_PRINTLN("ABORT");
                 break;
             }
         }
@@ -911,7 +944,7 @@ public:
     static void rotateHome()
     {
     #ifndef DISABLE_ROTARY
-        if (sDisableRotary)
+        if (sSettings.fDisableRotary)
             return;
         if (shortestDistance(rotaryMotorCurrentPosition(), 0) > 0)
         {
@@ -927,7 +960,7 @@ public:
     static void rotateUntilHome(float speed)
     {
     #ifndef DISABLE_ROTARY
-        if (sDisableRotary)
+        if (sSettings.fDisableRotary)
             return;
         bool neg = (speed < 0);
         speed = (ROTARY_MINIMUM_POWER/100.0) + 0.1 * abs(speed);
@@ -946,7 +979,7 @@ public:
             delay(1);
             if (!rotaryStatus.isMoving())
             {
-                DEBUG_PRINTLN(F("ABORT"));
+                DEBUG_PRINTLN("ABORT");
                 break;
             }
         }
@@ -1000,12 +1033,12 @@ public:
             }
             if (rotaryHomeLimit())
             {
-                DEBUG_PRINTLN(F("FOUND HOME"));
+                DEBUG_PRINTLN("FOUND HOME");
                 resetRotaryPosition();
             }
             else
             {
-                DEBUG_PRINTLN(F("NOT AT HOME"));
+                DEBUG_PRINTLN("NOT AT HOME");
             }
         }
     #endif
@@ -1026,7 +1059,7 @@ public:
         // Rotary is not moving
         return false;
     #else
-        return !sDisableRotary && fRotaryMoving;
+        return !sSettings.fDisableRotary && fRotaryMoving;
     #endif
     }
 
@@ -1035,7 +1068,7 @@ public:
     #ifdef DISABLE_ROTARY
         return true;
     #else
-        return sDisableRotary || ((rotaryHomeLimit() || rotaryMotorCurrentPosition() == 0) && !fRotaryMoving);
+        return sSettings.fDisableRotary || ((rotaryHomeLimit() || rotaryMotorCurrentPosition() == 0) && !fRotaryMoving);
     #endif
     }
 
@@ -1126,11 +1159,15 @@ public:
 
         //////////////////////////
 
-        if (readSettingsFromEEPROM())
+        if (!EEPROM.begin(EEPROM_SIZE))
         {
-            println(F("Read calibration"));
+            println("Failed to initialize EEPROM");
         }
-        //println(F("Generating random"));
+        else if (sSettings.read())
+        {
+            println("Read calibration");
+        }
+        //println("Generating random");
         // randomSeed(Enthropy::generate());
     }
 
@@ -1138,20 +1175,20 @@ public:
 
     static bool isCalibrated()
     {
-        return sUpLimitsCalibrated && sDownLimitsCalibrated;
+        return sSettings.fUpLimitsCalibrated && sSettings.fDownLimitsCalibrated;
     }
 
     static void seekToBottom(bool usePID = true)
     {
         if (!isRotaryAtRest())
         {
-            DEBUG_PRINTLN(F("ABORT: ROTARY NOT HOME"));
+            DEBUG_PRINTLN("ABORT: ROTARY NOT HOME");
             DEBUG_PRINTLN(rotaryMotorCurrentPosition());
             return;
         }
         if (!usePID)
         {
-            DEBUG_PRINTLN(F("SEEK TO BOTTOM"));
+            DEBUG_PRINTLN("SEEK TO BOTTOM");
 
             // seek down
             float mpower = LIFTER_SEEKBOTTTOM_POWER / 100.0;
@@ -1166,7 +1203,7 @@ public:
 
                 if (!lifterStatus.isMoving())
                 {
-                    DEBUG_PRINTLN(F("ABORT"));
+                    DEBUG_PRINTLN("ABORT");
                     break;
                 }
             }
@@ -1174,12 +1211,12 @@ public:
             delay(500);
             if (botLimit)
             {
-                DEBUG_PRINTLN(F("BOTTOM LIMIT REACHED"));
-                if (sLifterDistance == 0)
+                DEBUG_PRINTLN("BOTTOM LIMIT REACHED");
+                if (sSettings.fLifterDistance == 0)
                 {
-                    sLifterDistance = abs(getLifterPosition()) + 10;
-                    DEBUG_PRINT(F("LIFTER DISTANCE: "));
-                    DEBUG_PRINTLN(sLifterDistance);
+                    sSettings.fLifterDistance = abs(getLifterPosition()) + 10;
+                    DEBUG_PRINT("LIFTER DISTANCE: ");
+                    DEBUG_PRINTLN(sSettings.fLifterDistance);
                 }
                 resetLifterPosition();
             }
@@ -1195,7 +1232,7 @@ public:
             distance.setSampleTime(1);
             distance.setOutputLimits(-350, 350);
 
-            DEBUG_PRINTLN(F("SEEK TO BOTTOM PID"));
+            DEBUG_PRINTLN("SEEK TO BOTTOM PID");
         #ifdef USE_DEBUG
             uint32_t start = millis();
         #endif
@@ -1216,7 +1253,7 @@ public:
 
                 if (!lifterStatus.isMoving())
                 {
-                    DEBUG_PRINT(F("LIFTER ABORTED AT ")); DEBUG_PRINTLN(encoder_ticks);
+                    DEBUG_PRINT("LIFTER ABORTED AT "); DEBUG_PRINTLN(encoder_ticks);
                     break;
                 }
             }
@@ -1226,10 +1263,10 @@ public:
         #endif
             if (botLimit)
             {
-                DEBUG_PRINTLN(F("BOTTOM LIMIT REACHED"));
-                DEBUG_PRINT(F("DISTANCE: "));
+                DEBUG_PRINTLN("BOTTOM LIMIT REACHED");
+                DEBUG_PRINT("DISTANCE: ");
                 DEBUG_PRINTLN(getLifterPosition());
-                DEBUG_PRINT(F("TIME: "));
+                DEBUG_PRINT("TIME: ");
                 DEBUG_PRINTLN(stop - start);
                 // resetLifterPosition();
             }
@@ -1241,11 +1278,11 @@ public:
         // On startup we'll first seek to the top and make sure
         // that the rotary is in home position. Then seek back down.
         // This should safely clear any state the scope was in.
-        println(F("SAFETY"));
+        println("SAFETY");
         if (seekToTop(0.8, false))
         {
         #ifndef DISABLE_SAFETY_MANEUVER
-            if (!sDisableRotary)
+            if (!sSettings.fDisableRotary)
             {
                 setLightShow(kLightKit_Dagobah);
 
@@ -1261,7 +1298,7 @@ public:
 
                     if (!rotaryHomeLimit())
                     {
-                        println(F("NOT HOME TRY SPIN AROUND"));
+                        println("NOT HOME TRY SPIN AROUND");
                         bool rotaryWasHome = true;
                         RotaryStatus rotaryStatus;
                         rotaryMotorMove(-(ROTARY_MINIMUM_POWER/100.0));
@@ -1290,7 +1327,7 @@ public:
                     }
                     if (rotaryHomeLimit())
                     {
-                        println(F("FIND ENCODER LENGTH"));
+                        println("FIND ENCODER LENGTH");
                         resetRotaryPosition();
                         encoder_rotary_last_status = millis();
                         bool rotaryWasHome = true;
@@ -1326,7 +1363,7 @@ public:
                         rotaryMotorStop();
                         delay(100);
                         sRotaryCircleEncoderCount = abs(getRotaryPosition());
-                        print(F("ROTARY ENCODER COUNT = "));
+                        print("ROTARY ENCODER COUNT = ");
                         println(sRotaryCircleEncoderCount);
                         if (sRotaryCircleEncoderCount < 1000)
                         {
@@ -1336,7 +1373,7 @@ public:
                     }
                     else
                     {
-                        DEBUG_PRINTLN(F("ROTARY NOT HOME TRY AGAIN"));
+                        DEBUG_PRINTLN("ROTARY NOT HOME TRY AGAIN");
                     }
                 }
                 // Scope position won't work
@@ -1350,12 +1387,12 @@ public:
             setLightShow(kLightKit_Off);
             if (!isRotaryAtRest())
             {
-                println(F("ABORT: ROTARY NOT HOME"));
+                println("ABORT: ROTARY NOT HOME");
                 println(rotaryMotorCurrentPosition());
                 return false;
             }
-            // Reset sLifterDistance length
-            sLifterDistance = 0;
+            // Reset fLifterDistance length
+            sSettings.fLifterDistance = 0;
             resetLifterPosition();
             seekToBottom(false);
             sSafetyManeuver = lifterBottomLimit();
@@ -1363,7 +1400,7 @@ public:
         }
         else
         {
-            DEBUG_PRINTLN(F("ABORT: FAILED SEEK TO TOP"));
+            DEBUG_PRINTLN("ABORT: FAILED SEEK TO TOP");
             return false;
         }
     }
@@ -1382,10 +1419,10 @@ public:
     {
         bool success = true;
         sCalibrating = true;
-        sMinimumPower = max(int(sMinimumPower), LIFTER_MINIMUM_POWER);
+        sSettings.fMinimumPower = max(int(sSettings.fMinimumPower), LIFTER_MINIMUM_POWER);
         if (!safetyManeuver())
         {
-            println(F("ABORT: FAILED SAFETY MANEUVER"));
+            println("ABORT: FAILED SAFETY MANEUVER");
             sCalibrating = false;
             return false;
         }
@@ -1394,17 +1431,17 @@ public:
         {
             if (!safetyManeuver())
             {
-                println(F("ABORT: FAILED SAFETY MANEUVER"));
+                println("ABORT: FAILED SAFETY MANEUVER");
                 sCalibrating = false;
                 return false;
             }
         }
         // Clear all limits
-        memset(sUpLimits, '\0', sizeof(sUpLimits));
-        memset(sDownLimits, '\0', sizeof(sDownLimits));
-        sUpLimitsCalibrated = false;
-        sDownLimitsCalibrated = false;
-        sMinimumPower = 0;
+        memset(sSettings.fUpLimits, '\0', sizeof(sSettings.fUpLimits));
+        memset(sSettings.fDownLimits, '\0', sizeof(sSettings.fDownLimits));
+        sSettings.fUpLimitsCalibrated = false;
+        sSettings.fDownLimitsCalibrated = false;
+        sSettings.fMinimumPower = 0;
 
         long homePosition = getLifterPosition();
         int topSpeed = LIFTER_MINIMUM_POWER;
@@ -1419,20 +1456,20 @@ public:
         }
         seekToBottom(false);
 
-        long targetDistance = sLifterDistance;
+        long targetDistance = sSettings.fLifterDistance;
 
-        println(F("SEEK TO TOP"));
+        println("SEEK TO TOP");
         for (; sCalibrating && topSpeed <= 100; topSpeed += 5)
         {
             unsigned tries = 0;
             if (!isRotaryAtRest())
             {
-                DEBUG_PRINTLN(F("ABORT: ROTARY NOT AT HOME POSITION"));
+                DEBUG_PRINTLN("ABORT: ROTARY NOT AT HOME POSITION");
                 DEBUG_PRINTLN(rotaryMotorCurrentPosition());
                 goto retry;
             }
             long outputLimit = max(long(topSpeed * OUTPUT_LIMIT_PRESCALE), 10L);
-            print(F("SPEED: ")); println(topSpeed);
+            print("SPEED: "); println(topSpeed);
             while (outputLimit >= 0)
             {
                 tries++;
@@ -1448,7 +1485,7 @@ public:
             #endif
                 bool topLimit;
                 long start_ticks = getLifterPosition();
-                DEBUG_PRINT(F("OUTPUT LIMIT: ")); DEBUG_PRINTLN(outputLimit);
+                DEBUG_PRINT("OUTPUT LIMIT: "); DEBUG_PRINTLN(outputLimit);
                 LifterStatus lifterStatus;
                 for (;;)
                 {
@@ -1466,14 +1503,14 @@ public:
 
                     if (!lifterStatus.isMoving())
                     {
-                        println(F("ABORT"));
+                        println("ABORT");
                         break;
                     }
                 }
                 lifterMotorStop();
                 if (start_ticks == getLifterPosition())
                 {
-                    DEBUG_PRINTLN(F(" SPEED TOO LOW"));
+                    DEBUG_PRINTLN(" SPEED TOO LOW");
                     break;
                 }
             #ifdef USE_DEBUG
@@ -1482,25 +1519,25 @@ public:
                 if (topLimit)
                 {
                 #if 0//def USE_DEBUG
-                    DEBUG_PRINT(F("TOP LIMIT REACHED - "));
+                    DEBUG_PRINT("TOP LIMIT REACHED - ");
                     DEBUG_PRINT(topSpeed);
-                    DEBUG_PRINT(F(" "));
+                    DEBUG_PRINT(" ");
                     DEBUG_PRINTLN(outputLimit);
 
                     long encoder_ticks = getLifterPosition();
-                    DEBUG_PRINT(F("  DISTANCE: "));
+                    DEBUG_PRINT("  DISTANCE: ");
                     DEBUG_PRINT(encoder_ticks);
-                    DEBUG_PRINT(F(" MAX DISTANCE: "));
+                    DEBUG_PRINT(" MAX DISTANCE: ");
                     DEBUG_PRINTLN(maxEncoderVal);
-                    DEBUG_PRINT(F("TIME: "));
+                    DEBUG_PRINT("TIME: ");
                     DEBUG_PRINT(stop - start);
                     DEBUG_PRINTLN();
                 #endif
                     size_t index = topSpeed/5;
-                    sUpLimits[index].valid = true;
-                    sUpLimits[index].outputLimit = outputLimit;
-                    if (sMinimumPower == 0)
-                        sMinimumPower = topSpeed;
+                    sSettings.fUpLimits[index].valid = true;
+                    sSettings.fUpLimits[index].outputLimit = outputLimit;
+                    if (sSettings.fMinimumPower == 0)
+                        sSettings.fMinimumPower = topSpeed;
                     break;
                 }
                 else
@@ -1508,16 +1545,16 @@ public:
                     long encoder_ticks = getLifterPosition();
                     if (outputLimit == 0)
                     {
-                        DEBUG_PRINTLN(F(" LIMIT NOT REACHED - GIVING UP"));
+                        DEBUG_PRINTLN(" LIMIT NOT REACHED - GIVING UP");
                         break;
                     }
                     DEBUG_PRINT(encoder_ticks);
-                    DEBUG_PRINT(F(" LIMIT NOT REACHED - RETRYING "));
+                    DEBUG_PRINT(" LIMIT NOT REACHED - RETRYING ");
                     DEBUG_PRINT(targetDistance - encoder_ticks);
                     outputLimit -= max((targetDistance - encoder_ticks)*2, 10L);
                     if (outputLimit < 0)
                         outputLimit = 0;
-                    DEBUG_PRINT(F(" NEW LIMIT : ")); DEBUG_PRINTLN(outputLimit);
+                    DEBUG_PRINT(" NEW LIMIT : "); DEBUG_PRINTLN(outputLimit);
                 }
                 delay(1000);
                 if (serialAbort())
@@ -1525,7 +1562,7 @@ public:
             }
             if (!sCalibrating || serialAbort())
             {
-                println(F("SERIAL ABORT"));
+                println("SERIAL ABORT");
                 success = false;
                 break;
             }
@@ -1533,21 +1570,21 @@ public:
         // Abort calibration
         if (!success)
         {
-            println(F("CALIBRATION ABORTED"));
+            println("CALIBRATION ABORTED");
             sCalibrating = false;
             return false;
         }
 
-        sUpLimitsCalibrated = true;
-        println(F("SEEK TO BOTTOM"));
-        DEBUG_PRINT(F("TOP LIMIT SWITCH: "));
+        sSettings.fUpLimitsCalibrated = true;
+        println("SEEK TO BOTTOM");
+        DEBUG_PRINT("TOP LIMIT SWITCH: ");
         DEBUG_PRINTLN(lifterTopLimit());
-        DEBUG_PRINT(F("BOTTOM LIMIT SWITCH: "));
+        DEBUG_PRINT("BOTTOM LIMIT SWITCH: ");
         DEBUG_PRINTLN(lifterBottomLimit());
         seekToBottom(false);
         delay(2000);
 
-        for (topSpeed = sMinimumPower; sCalibrating && topSpeed <= 100; topSpeed += 5)
+        for (topSpeed = sSettings.fMinimumPower; sCalibrating && topSpeed <= 100; topSpeed += 5)
         {
             float limit;
             if (!getUpOutputLimit(topSpeed/100.0f, limit))
@@ -1558,7 +1595,7 @@ public:
                 long minEncoderVal = 0x7FFFFFFFL;
                 if (!seekToTop(0.8))
                 {
-                    println(F("SEEK TO TOP FAILED - ABORT"));
+                    println("SEEK TO TOP FAILED - ABORT");
                     topSpeed = 200;
                     success = false;
                     break;
@@ -1585,7 +1622,7 @@ public:
                 lifterMotorStop();
                 if (start_ticks == getLifterPosition())
                 {
-                    DEBUG_PRINTLN(F(" SPEED TOO LOW"));
+                    DEBUG_PRINTLN(" SPEED TOO LOW");
                     success = false;
                     break;
                 }
@@ -1594,40 +1631,40 @@ public:
             #endif
                 if (botLimit)
                 {
-                    // DEBUG_PRINT(F("BOT LIMIT REACHED - "));
+                    // DEBUG_PRINT("BOT LIMIT REACHED - ");
                     // DEBUG_PRINT(topSpeed);
-                    // DEBUG_PRINT(F(" "));
+                    // DEBUG_PRINT(" ");
                     // DEBUG_PRINTLN(outputLimit);
 
                     // long encoder_ticks = getLifterPosition();
-                    // DEBUG_PRINT(F("  DISTANCE: "));
+                    // DEBUG_PRINT("  DISTANCE: ");
                     // DEBUG_PRINT(encoder_ticks);
-                    // DEBUG_PRINT(F(" MAX DISTANCE: "));
+                    // DEBUG_PRINT(" MAX DISTANCE: ");
                     // DEBUG_PRINTLN(minEncoderVal);
-                    // DEBUG_PRINT(F("TIME: "));
+                    // DEBUG_PRINT("TIME: ");
                     // DEBUG_PRINT(stop - start);
                     // if (encoder_ticks > minEncoderVal)
                     // {
-                    //     DEBUG_PRINT(F(" BOUNCE: "));
+                    //     DEBUG_PRINT(" BOUNCE: ");
                     //     DEBUG_PRINT(encoder_ticks - minEncoderVal);
                     // }
                     // DEBUG_PRINTLN();
                     size_t index = topSpeed/5;
-                    // DEBUG_PRINT(F("index: ")); DEBUG_PRINTLN(index);
-                    sDownLimits[index].valid = true;
-                    sDownLimits[index].outputLimit = outputLimit;
+                    // DEBUG_PRINT("index: "); DEBUG_PRINTLN(index);
+                    sSettings.fDownLimits[index].valid = true;
+                    sSettings.fDownLimits[index].outputLimit = outputLimit;
                     break;
                 }
                 else
                 {
                     long encoder_ticks = getLifterPosition();
                     // DEBUG_PRINT(encoder_ticks);
-                    // DEBUG_PRINT(F(" LIMIT NOT REACHED - RETRYING "));
+                    // DEBUG_PRINT(" LIMIT NOT REACHED - RETRYING ");
                     // DEBUG_PRINT(targetDistance - encoder_ticks);
                     outputLimit -= max(encoder_ticks*2, 1L);
                     if (outputLimit < 0)
                         outputLimit = 0;
-                    // DEBUG_PRINT(F(" NEW LIMIT : ")); DEBUG_PRINTLN(outputLimit);
+                    // DEBUG_PRINT(" NEW LIMIT : "); DEBUG_PRINTLN(outputLimit);
                 }
                 delay(2000);
                 if (serialAbort())
@@ -1635,7 +1672,7 @@ public:
             }
             if (!sCalibrating || serialAbort())
             {
-                println(F("SERIAL ABORT"));
+                println("SERIAL ABORT");
                 success = false;
                 break;
             }
@@ -1643,17 +1680,17 @@ public:
         seekToBottom();
         if (!success)
         {
-            println(F("CALIBRATION ABORTED"));
-            sMinimumPower = max(int(sMinimumPower), LIFTER_MINIMUM_POWER);
+            println("CALIBRATION ABORTED");
+            sSettings.fMinimumPower = max(int(sSettings.fMinimumPower), LIFTER_MINIMUM_POWER);
             sCalibrating = false;
             return false;
         }
 
-        sDownLimitsCalibrated = true;
+        sSettings.fDownLimitsCalibrated = true;
     #ifndef USE_DEBUG
         writeSettingsToEEPROM();
     #endif
-        println(F("SUCCESS"));
+        println("SUCCESS");
         sCalibrating = false;
         return true;
     }
@@ -1674,7 +1711,7 @@ public:
                         {
                             // random position random speed in range
                             uint8_t pos = random(100);
-                            uint8_t speedpercentage = min(max(int(fMoveModeNextLifterSpeed), int(sMinimumPower)), 100);
+                            uint8_t speedpercentage = min(max(int(fMoveModeNextLifterSpeed), int(sSettings.fMinimumPower)), 100);
                             if (!seekToPosition(pos/100.0, speedpercentage/100.0))
                             {
                                 // position failed lets retry once
@@ -1845,7 +1882,7 @@ private:
         cli();
         encoder_lifter_val = 0;
         encoder_lifter_pin_A_last = 0;
-        encoder_lifter_ticks = sLifterDistance;    
+        encoder_lifter_ticks = sSettings.fLifterDistance;    
         sei();
     }
 
@@ -1865,14 +1902,14 @@ private:
         speed = min(max(speed, 0.0f), 1.0f);
         size_t index = size_t(speed*100/5);
         limit = 0;
-        if (index < sizeof(sDownLimits)/sizeof(sDownLimits[0]) && sDownLimits[index].valid)
+        if (index < sSettings.limitCount() && sSettings.fDownLimits[index].valid)
         {
-            limit = sDownLimits[index].outputLimit;
+            limit = sSettings.fDownLimits[index].outputLimit;
             return true;
         }
-        DEBUG_PRINT(F("UNCALIBRATED SPEED - "));
+        DEBUG_PRINT("UNCALIBRATED SPEED - ");
         DEBUG_PRINT(speed);
-        DEBUG_PRINT(F(" - "));
+        DEBUG_PRINT(" - ");
         DEBUG_PRINTLN(index);
         return false;
     }
@@ -1882,14 +1919,14 @@ private:
         speed = min(max(speed, 0.0f), 1.0f);
         size_t index = size_t(speed*100/5);
         limit = 0;
-        if (index < sizeof(sUpLimits)/sizeof(sUpLimits[0]) && sUpLimits[index].valid)
+        if (index < sSettings.limitCount() && sSettings.fUpLimits[index].valid)
         {
-            limit = sUpLimits[index].outputLimit;
+            limit = sSettings.fUpLimits[index].outputLimit;
             return true;
         }
-        DEBUG_PRINT(F("UNCALIBRATED SPEED - "));
+        DEBUG_PRINT("UNCALIBRATED SPEED - ");
         DEBUG_PRINT(speed);
-        DEBUG_PRINT(F(" - "));
+        DEBUG_PRINT(" - ");
         DEBUG_PRINTLN(index);
         return false;
     }
@@ -1901,8 +1938,8 @@ public:
     {
         if (!usePID)
         {
-            float mpower = sMinimumPower/100.0 + 0.05 + 0.1 * speed;
-            print(F(" MOTOR: ")); println(mpower);
+            float mpower = sSettings.fMinimumPower/100.0 + 0.05 + 0.1 * speed;
+            print(" MOTOR: "); println(mpower);
 
             // seek up
             bool topLimit;
@@ -1935,12 +1972,12 @@ public:
         }
         if (!isRotaryAtRest())
         {
-            DEBUG_PRINTLN(F("ABORT: ROTARY NOT HOME"));
+            DEBUG_PRINTLN("ABORT: ROTARY NOT HOME");
             DEBUG_PRINTLN(rotaryMotorCurrentPosition());
             return false;
         }
         speed = min(max(speed, 0.0f), 1.0f);
-        TargetSteering steering(sLifterDistance);
+        TargetSteering steering(sSettings.fLifterDistance);
         steering.setSampleTime(1);
         float limit;
         if (!getUpOutputLimit(speed, limit))
@@ -1962,7 +1999,7 @@ public:
 
             if (!lifterStatus.isMoving())
             {
-                DEBUG_PRINT(F("LIFTER ABORTED AT ")); DEBUG_PRINTLN(encoder_ticks);
+                DEBUG_PRINT("LIFTER ABORTED AT "); DEBUG_PRINTLN(encoder_ticks);
                 break;
             }
         }
@@ -1972,10 +2009,10 @@ public:
     #endif
         if (topLimit)
         {
-            DEBUG_PRINTLN(F("TOP LIMIT REACHED"));
-            DEBUG_PRINT(F("DISTANCE: "));
+            DEBUG_PRINTLN("TOP LIMIT REACHED");
+            DEBUG_PRINT("DISTANCE: ");
             DEBUG_PRINTLN(getLifterPosition());
-            DEBUG_PRINT(F("TIME: "));
+            DEBUG_PRINT("TIME: ");
             DEBUG_PRINTLN(stop - start);
             return true;
         }
@@ -1984,7 +2021,7 @@ public:
 
     static bool seekToPositionSlow(float pos, float speed)
     {
-        DEBUG_PRINT(F("SLOW: ")); DEBUG_PRINT(speed);
+        DEBUG_PRINT("SLOW: "); DEBUG_PRINT(speed);
         // ensure position is in the range of 0.0 [bottom] - 1.0 [top]
         pos = min(max(abs(pos), 0.0f), 1.0f);
         if (isRotarySpinning() || !rotaryHomeLimit())
@@ -1993,11 +2030,11 @@ public:
             pos = min(max(pos, 0.5f), 1.0f);
         }
 
-        long maxlen = sLifterDistance;
+        long maxlen = sSettings.fLifterDistance;
         long target_ticks = pos * maxlen;
         bool success = false;
-        float mpower = sMinimumPower/100.0 + 0.05 + 0.1 * speed;
-        DEBUG_PRINT(F(" MOTOR: ")); DEBUG_PRINTLN(mpower);
+        float mpower = sSettings.fMinimumPower/100.0 + 0.05 + 0.1 * speed;
+        DEBUG_PRINT(" MOTOR: "); DEBUG_PRINTLN(mpower);
         if (target_ticks > getLifterPosition())
         {
             // seek up
@@ -2015,7 +2052,7 @@ public:
                 delay(2);
                 if (!lifterStatus.isMoving())
                 {
-                    DEBUG_PRINTLN(F("ABORT"));
+                    DEBUG_PRINTLN("ABORT");
                     break;
                 }
             }
@@ -2039,7 +2076,7 @@ public:
 
                 if (!lifterStatus.isMoving())
                 {
-                    DEBUG_PRINTLN(F("ABORT"));
+                    DEBUG_PRINTLN("ABORT");
                     break;
                 }
             }
@@ -2050,448 +2087,6 @@ public:
     }
 
     ///////////////////////////////////
-
-    static bool readSettingsFromEEPROM()
-    {
-        size_t offs = 0;
-        uint16_t siz = 0;
-        uint32_t magic; 
-        EEPROM.get(offs, magic); offs += sizeof(magic);
-        if (magic == EEPROM_MAGIC)
-        {
-            uint32_t siz_offs = offs;
-            uint16_t minpower = 0;
-            uint16_t height = 0;
-            uint32_t baudrate = 0;
-            bool rotaryLimitSetting = false;
-            bool lifterLimitSetting = false;
-            bool upcal = false;
-            bool downcal = false;
-            uint8_t limitFlags = 0;
-            EEPROM.get(offs, siz); offs += sizeof(siz);
-            EEPROM.get(offs, minpower); offs += sizeof(minpower);
-            EEPROM.get(offs, height); offs += sizeof(height);
-            EEPROM.get(offs, limitFlags); offs += sizeof(limitFlags);
-            upcal = ((limitFlags & 1) != 0);
-            rotaryLimitSetting = ((limitFlags & 2) != 0);
-            lifterLimitSetting = ((limitFlags & 4) != 0);
-            sDisableRotary = ((limitFlags & 8) != 0);
-            EEPROM.get(offs, downcal); offs += sizeof(downcal);
-            EEPROM.get(offs, baudrate); offs += sizeof(baudrate);
-            memset(sUpLimits, '\0', sizeof(sUpLimits));
-            if (upcal)
-            {
-                for (size_t i = minpower/5; i < sizeof(sUpLimits)/sizeof(sUpLimits[0]); i++)
-                {
-                    EEPROM.get(offs, sUpLimits[i].valid); offs += sizeof(sUpLimits[i].valid);
-                    EEPROM.get(offs, sUpLimits[i].outputLimit); offs += sizeof(sUpLimits[i].outputLimit);
-                }
-            }
-            memset(sDownLimits, '\0', sizeof(sDownLimits));
-            if (downcal)
-            {
-                for (size_t i = minpower/5; i < sizeof(sDownLimits)/sizeof(sDownLimits[0]); i++)
-                {
-                    EEPROM.get(offs, sDownLimits[i].valid); offs += sizeof(sDownLimits[i].valid);
-                    EEPROM.get(offs, sDownLimits[i].outputLimit); offs += sizeof(sDownLimits[i].outputLimit);
-                }
-            }
-            if (offs-siz_offs != siz)
-            {
-                DEBUG_PRINTLN("Invalid EEPROM data");
-                memset(sUpLimits, '\0', sizeof(sUpLimits));
-                memset(sDownLimits, '\0', sizeof(sDownLimits));
-                sUpLimitsCalibrated = false;
-                sDownLimitsCalibrated = false;
-                sMinimumPower = 0;
-                return false;
-            }
-            sMinimumPower = minpower;
-            sLifterDistance = height;
-            sUpLimitsCalibrated = upcal;
-            sDownLimitsCalibrated = downcal;
-            fRotaryLimitSetting = rotaryLimitSetting;
-            fLifterLimitSetting = lifterLimitSetting;
-            if (sBaudRate != baudrate)
-            {
-                sBaudRate = baudrate;
-            #ifndef USE_DEBUG
-                Serial.begin(sBaudRate);
-            #endif
-            }
-            return true;
-        }
-        return false;
-    }
-
-    static void writeSettingsToEEPROM()
-    {
-    #ifndef USE_DEBUG
-        size_t offs = 0;
-        uint32_t magic = EEPROM_MAGIC; 
-        EEPROM.put(offs, magic); offs += sizeof(magic);
-        // Reserve space for offset field
-        uint16_t siz = 0;
-        size_t siz_offs = offs; offs += sizeof(siz);
-        EEPROM.put(offs, sMinimumPower); offs += sizeof(sMinimumPower);
-        EEPROM.put(offs, sLifterDistance); offs += sizeof(sLifterDistance);
-        uint8_t limitFlags = sUpLimitsCalibrated;
-        limitFlags |= (uint8_t(fRotaryLimitSetting) << 1);
-        limitFlags |= (uint8_t(fLifterLimitSetting) << 2);
-        limitFlags |= (uint8_t(sDisableRotary) << 3);
-        EEPROM.put(offs, limitFlags); offs += sizeof(limitFlags);
-        EEPROM.put(offs, sDownLimitsCalibrated); offs += sizeof(sDownLimitsCalibrated);
-        EEPROM.put(offs, sBaudRate); offs += sizeof(sBaudRate);
-        if (sUpLimitsCalibrated)
-        {
-            for (size_t i = sMinimumPower/5; i < sizeof(sUpLimits)/sizeof(sUpLimits[0]); i++)
-            {
-                EEPROM.put(offs, sUpLimits[i].valid); offs += sizeof(sUpLimits[i].valid);
-                EEPROM.put(offs, sUpLimits[i].outputLimit); offs += sizeof(sUpLimits[i].outputLimit);
-            }
-        }
-        if (sDownLimitsCalibrated)
-        {
-            for (size_t i = sMinimumPower/5; i < sizeof(sDownLimits)/sizeof(sDownLimits[0]); i++)
-            {
-                EEPROM.put(offs, sDownLimits[i].valid); offs += sizeof(sDownLimits[i].valid);
-                EEPROM.put(offs, sDownLimits[i].outputLimit); offs += sizeof(sDownLimits[i].outputLimit);
-            }
-        }
-        EEPROM.put(siz_offs, offs-siz_offs);
-
-        // Check for the command section magic code
-        // if it's missing we need to write out a terminating byte
-        EEPROM.get(offs, magic);
-        if (magic != EEPROM_CMD_MAGIC)
-        {
-            magic = EEPROM_CMD_MAGIC;
-            EEPROM.put(offs, magic); offs += sizeof(magic);
-        
-            uint8_t tag = EEPROM_END_TAG;
-            EEPROM.put(offs, tag); offs += sizeof(tag);
-        }
-    #endif
-    }
-
-    static void clearCommandsFromEEPROM()
-    {
-    #ifndef USE_DEBUG
-        uint16_t offs = 0;
-        uint32_t magic;
-        EEPROM.get(offs, magic); offs += sizeof(magic);
-        if (magic == EEPROM_MAGIC)
-        {
-            uint16_t siz = 0;
-            EEPROM.get(offs, siz); offs += siz;
-
-            EEPROM.get(offs, magic); offs += sizeof(magic);
-            if (magic == EEPROM_CMD_MAGIC)
-            {
-                uint8_t tag = EEPROM_END_TAG;
-                EEPROM.put(offs, tag);
-                println(F("Cleared"));
-            }
-        }
-    #endif
-    }
-
-    // static void listCommandsFromEEPROM()
-    // {
-    // #ifndef USE_DEBUG
-    //     uint16_t offs = 0;
-    //     uint32_t magic;
-    //     EEPROM.get(offs, magic); offs += sizeof(magic);
-    //     if (magic == EEPROM_MAGIC)
-    //     {
-    //         uint16_t siz = 0;
-    //         EEPROM.get(offs, siz); offs += siz;
-
-    //         EEPROM.get(offs, magic); offs += sizeof(magic);
-    //         if (magic == EEPROM_CMD_MAGIC)
-    //         {
-    //             while (offs <= EEPROM.length())
-    //             {
-    //                 uint8_t snum;
-    //                 EEPROM.get(offs, snum); offs += sizeof(snum);
-    //                 if (snum == EEPROM_END_TAG)
-    //                     break;
-    //                 print('[');
-    //                 print(snum);
-    //                 print(']');
-    //                 print(' ');
-    //                 print(':');
-    //                 print('P');
-    //                 uint8_t len;
-    //                 EEPROM.get(offs, len); offs += sizeof(len);
-    //                 while (len > 0)
-    //                 {
-    //                     char ch;
-    //                     EEPROM.get(offs, ch); offs += sizeof(ch);
-    //                     print((char)ch);
-    //                     len--;
-    //                 }
-    //                 println();
-    //             }
-    //         }
-    //     }
-    //     // println(F("Complete"));
-    // #endif
-    // }
-
-    static void listSortedCommandsFromEEPROM()
-    {
-    #ifndef USE_DEBUG
-        typedef uint32_t BMAPWORD;
-    #define BMAPWORD_GRANULARITY    (sizeof(BMAPWORD))
-    #define BMAPWORD_BIT_SIZE       (sizeof(BMAPWORD) * 8)
-    #define BIT_MAPWORD(bitpos)     (0x1L << (BMAPWORD_BIT_SIZE - 1 - (bitpos)))
-    #define SET_MAPWORD_BIT(value, bit) {\
-        uint8_t bitpos = (value) % sizeof(usedBitmap[0]); \
-        uint8_t wordpos = (value) / sizeof(usedBitmap[0]); \
-        usedBitmap[wordpos] = (usedBitmap[wordpos] & ~(BIT_MAPWORD(bitpos))) | (uint32_t(bit) << (BMAPWORD_BIT_SIZE - 1 - bitpos)); }
-    #define MAPWORD_BIT(value) \
-        ((usedBitmap[(value) / sizeof(usedBitmap[0])] & BIT_MAPWORD((value) % sizeof(usedBitmap[0]))) != 0)
-
-        uint16_t offs = 0;
-        uint32_t magic;
-        uint32_t usedBitmap[MAX_COMMANDS / sizeof(uint32_t)+1];
-        memset(&usedBitmap, '\0', sizeof(usedBitmap));
-        EEPROM.get(offs, magic); offs += sizeof(magic);
-        if (magic == EEPROM_MAGIC)
-        {
-            uint16_t siz = 0;
-            EEPROM.get(offs, siz); offs += siz;
-
-            EEPROM.get(offs, magic); offs += sizeof(magic);
-            if (magic == EEPROM_CMD_MAGIC)
-            {
-                uint16_t scanoffs = offs;
-                while (scanoffs <= EEPROM.length())
-                {
-                    uint8_t snum;
-                    EEPROM.get(scanoffs, snum); scanoffs += sizeof(snum);
-                    if (snum == EEPROM_END_TAG)
-                        break;
-
-                    SET_MAPWORD_BIT(snum, 1);
-                    uint8_t len;
-                    EEPROM.get(scanoffs, len); scanoffs += sizeof(len) + len;
-                }
-            }
-        }
-        for (unsigned i = 0; i < 100; i++)
-        {
-            if (MAPWORD_BIT(i))
-            {
-                uint16_t scanoffs = offs;
-                while (scanoffs <= EEPROM.length())
-                {
-                    uint8_t snum;
-                    EEPROM.get(scanoffs, snum); scanoffs += sizeof(snum);
-                    if (snum == EEPROM_END_TAG)
-                        break;
-                    if (snum == i)
-                    {
-                        print('[');
-                        print(snum);
-                        print(']');
-                        print(' ');
-                        print(':');
-                        print('P');
-                    }
-                    uint8_t len;
-                    EEPROM.get(scanoffs, len); scanoffs += sizeof(len);
-                    if (snum == i)
-                    {
-                        while (len > 0)
-                        {
-                            char ch;
-                            EEPROM.get(scanoffs, ch); scanoffs += sizeof(ch);
-                            print((char)ch);
-                            len--;
-                        }
-                        println();
-                        break;
-                    }
-                    else
-                    {
-                        scanoffs += len;
-                    }
-                }
-            }
-        }
-        // println(F("Complete"));
-    #undef MAPWORD_BIT
-    #undef SET_MAPWORD_BIT
-    #undef BIT_MAPWORD
-    #undef BMAPWORD_BIT_SIZE
-    #undef BMAPWORD_GRANULARITY
-    #endif
-    }
-
-    static bool readCommandFromEEPROM(uint8_t num, char* cmd, uint16_t* cmdoffs = nullptr)
-    {
-        uint16_t offs = 0;
-        uint32_t magic;
-        EEPROM.get(offs, magic); offs += sizeof(magic);
-        if (magic == EEPROM_MAGIC)
-        {
-            uint16_t siz = 0;
-            EEPROM.get(offs, siz); offs += siz;
-
-            EEPROM.get(offs, magic); offs += sizeof(magic);
-            if (magic == EEPROM_CMD_MAGIC)
-            {
-                while (offs <= EEPROM.length())
-                {
-                    uint8_t snum;
-                    EEPROM.get(offs, snum);
-                    if (snum == EEPROM_END_TAG)
-                        break;
-                    if (snum == num && cmdoffs != nullptr)
-                        *cmdoffs = offs;
-                    uint8_t len;
-                    offs += sizeof(snum);
-                    EEPROM.get(offs, len); offs += sizeof(len);
-                    if (snum == num)
-                    {
-                        if (cmd != nullptr)
-                        {
-                            char* ch = cmd;
-                            *ch++ = ':';
-                            *ch++ = 'P';
-                            while (len > 0)
-                            {
-                                EEPROM.get(offs, *ch); offs += sizeof(*ch);
-                                ch++;
-                                len--;
-                            }
-                            *ch = '\0';
-                        }
-                        return true;
-                    }
-                    else
-                    {
-                        offs += len;
-                    }
-                }
-            }
-        }
-        return false;
-    }
-
-    static bool deleteCommandFromEEPROM(uint8_t num)
-    {
-    #ifndef USE_DEBUG
-        uint16_t writeoffs;
-        if (!readCommandFromEEPROM(num, nullptr, &writeoffs))
-            return false;
-
-        uint8_t len;
-        uint16_t readoffs = writeoffs + 1;
-        EEPROM.get(readoffs, len); readoffs += sizeof(len);
-        readoffs += len;
-
-        while (readoffs < EEPROM.length())
-        {
-            uint8_t tag;
-            EEPROM.get(readoffs, tag); readoffs += sizeof(tag);
-            EEPROM.put(writeoffs, tag); writeoffs += sizeof(tag);
-            if (tag == EEPROM_END_TAG)
-            {
-                // End of buffer
-                break;
-            }
-            uint8_t readlen;
-            EEPROM.get(readoffs, readlen); readoffs += sizeof(readlen);
-            EEPROM.put(writeoffs, readlen); writeoffs += sizeof(readlen);
-            while (readlen > 0)
-            {
-                char ch;
-                EEPROM.get(readoffs, ch); readoffs += sizeof(ch);
-                EEPROM.put(writeoffs, ch); writeoffs += sizeof(ch);
-                readlen--;
-            }
-        }
-    #endif
-        return true;
-    }
-
-    static bool writeCommandToEEPROM(uint8_t num, const char* cmd)
-    {
-    #ifndef USE_DEBUG
-        // delete old command if it exists
-        deleteCommandFromEEPROM(num);
-
-        size_t offs = 0;
-        uint32_t magic;
-        EEPROM.get(offs, magic); offs += sizeof(magic);
-
-        if (magic == EEPROM_MAGIC)
-        {
-            uint16_t siz = 0;
-            EEPROM.get(offs, siz); offs += siz;
-
-            EEPROM.get(offs, magic); offs += sizeof(magic);
-            if (magic == EEPROM_CMD_MAGIC)
-            {
-                // append command to end of buffer
-                while (offs <= EEPROM.length())
-                {
-                    uint8_t tag;
-                    EEPROM.get(offs, tag);
-                    if (tag == EEPROM_END_TAG)
-                    {
-                        EEPROM.put(offs, num); offs += sizeof(num);
-
-                        uint8_t len = strlen(cmd);
-                        EEPROM.put(offs, len); offs += sizeof(len);
-                        while (len > 0)
-                        {
-                            EEPROM.put(offs, *cmd); offs += sizeof(*cmd);
-                            cmd++;
-                            len--;
-                        }
-                        // Write terminate byte
-                        num = EEPROM_END_TAG;
-                        EEPROM.put(offs, num); offs += sizeof(num);
-                        return true;
-                    }
-                    offs += sizeof(tag);
-                    uint8_t len;
-                    EEPROM.get(offs, len); offs += sizeof(len) + len;
-                }
-            }
-            else
-            {
-                // start new command buffer
-                magic = EEPROM_CMD_MAGIC;
-                EEPROM.put(offs, magic); offs += sizeof(magic);
-                
-                EEPROM.put(offs, num); offs += sizeof(num);
-
-                uint8_t len = strlen(cmd);
-                EEPROM.put(offs, len); offs += sizeof(len);
-                while (len > 0)
-                {
-                    EEPROM.put(offs, *cmd); offs += sizeof(*cmd);
-                    cmd++;
-                    len--;
-                }
-                // Write terminate byte
-                num = EEPROM_END_TAG;
-                EEPROM.put(offs, num); offs += sizeof(num);
-                return true;
-            }
-        }
-        else
-        {
-            println(F("Must calibrate first"));
-        }
-    #endif
-        return false;
-    }
 
     class RotaryStatus
     {
@@ -2577,9 +2172,6 @@ public:
     static uint8_t fMoveModeNextRotarySpeed;
     static uint8_t fMoveModeNextIntervalMin;
     static uint8_t fMoveModeNextIntervalMax;
-
-    static bool fLifterLimitSetting;
-    static bool fRotaryLimitSetting;
 };
 
 volatile long PeriscopeLifter::encoder_lifter_ticks;
@@ -2607,8 +2199,6 @@ uint32_t PeriscopeLifter::fRotaryThrottleUpdate;
 uint32_t PeriscopeLifter::fRotaryEncoderLastStatus;
 long PeriscopeLifter::fRotaryEncoderLastTick;
 bool PeriscopeLifter::fRotaryMoving;
-bool PeriscopeLifter::fLifterLimitSetting;
-bool PeriscopeLifter::fRotaryLimitSetting;
 
 bool PeriscopeLifter::fMoveMode;
 uint32_t PeriscopeLifter::fMoveModeNextCmd;
@@ -2665,10 +2255,9 @@ void setup()
     SetupEvent::ready();
     //////////////////////////
 
-    Serial.println(F("READY"));
+    Serial.println("READY");
 
-    Wire.begin();
-
+    // N.B.: Must call pinMode() before begin()
     sGPIOExpander.pinMode(EPIN_ROTARY_LIMIT, INPUT_PULLUP);
     sGPIOExpander.pinMode(EPIN_LIGHTKIT_A, OUTPUT);
     sGPIOExpander.pinMode(EPIN_LIGHTKIT_B, OUTPUT);
@@ -2677,6 +2266,7 @@ void setup()
     sGPIOExpander.pinMode(EPIN_MOTOR_ENB, OUTPUT);
     sGPIOExpander.pinMode(EPIN_LIFTER_TOPLIMIT, INPUT_PULLUP);
     sGPIOExpander.pinMode(EPIN_LIFTER_BOTLIMIT, INPUT_PULLUP);
+    sGPIOExpander.begin();
     lifter.disableMotors();
     scan_i2c();
 }
@@ -2745,7 +2335,7 @@ bool processLifterCommand(const char* cmd)
             if (*cmd == '\0')
             {
                 seq = min(max(int(seq), 0), MAX_COMMANDS);
-                if (!lifter.readCommandFromEEPROM(seq, sCmdBuffer))
+                if (!sSettings.readCommand(seq, sCmdBuffer, sizeof(sCmdBuffer), ":P"))
                 {
                     sCmdBuffer[0] = '\0';
                 }
@@ -2781,8 +2371,8 @@ bool processLifterCommand(const char* cmd)
             if (*cmd == '\0' || *cmd == ':')
             {
                 pos = min(max(int(pos), 0), 100);
-                Serial.print(F("POSITION: ")); Serial.print(pos);
-                Serial.print(F(" SPEED: ")); Serial.println(int(speed*100));
+                Serial.print("POSITION: "); Serial.print(pos);
+                Serial.print(" SPEED: "); Serial.println(int(speed*100));
                 lifter.seekToPosition(pos/100.0, speed);
             }
             break;
@@ -2793,7 +2383,7 @@ bool processLifterCommand(const char* cmd)
             lifter.moveModeEnd();
 
             // move
-            int nextLifterSpeed = sMinimumPower+5;
+            int nextLifterSpeed = sSettings.fMinimumPower+5;
             int nextRotarySpeed = ROTARY_MINIMUM_POWER+5;
             int nextIntervalMin = 1 + random(MOVEMODE_MAX_INTERVAL);
             int nextIntervalMax = nextIntervalMin + random(MOVEMODE_MAX_INTERVAL);
@@ -2801,7 +2391,7 @@ bool processLifterCommand(const char* cmd)
             {
                 // command lifter speed
                 nextLifterSpeed = strtolu(cmd+1, &cmd);
-                nextLifterSpeed = max(nextLifterSpeed, int(sMinimumPower));
+                nextLifterSpeed = max(nextLifterSpeed, int(sSettings.fMinimumPower));
             }
             if (*cmd == ',')
             {
@@ -2848,7 +2438,7 @@ bool processLifterCommand(const char* cmd)
             if (*cmd == '\0' && lifter.rotaryAllowed())
             {
                 speed = min(max(speed, -100), 100);
-                Serial.print(F("ROTARY SPEED: ")); Serial.println(speed);
+                Serial.print("ROTARY SPEED: "); Serial.println(speed);
                 if (speed == 0)
                 {
                     lifter.rotateHome();
@@ -2918,7 +2508,7 @@ bool processLifterCommand(const char* cmd)
             }
             if (*cmd == '\0' && lifter.rotaryAllowed())
             {
-                Serial.print(F("ROTARY DEGREE: ")); Serial.println(degrees);
+                Serial.print("ROTARY DEGREE: "); Serial.println(degrees);
                 if (relative)
                 {
                     lifter.rotaryMotorRelativePosition(degrees);
@@ -2939,7 +2529,7 @@ bool processLifterCommand(const char* cmd)
             // wait seconds
             bool rand = false;
             uint32_t seconds;
-            Serial.print(F("WAIT: ")); Serial.println(cmd);
+            Serial.print("WAIT: "); Serial.println(cmd);
             if ((rand = (*cmd == 'R')))
                 cmd++;
             seconds = strtolu(cmd, &cmd);
@@ -2951,7 +2541,7 @@ bool processLifterCommand(const char* cmd)
                 seconds = random(1, seconds);
                 Serial.println(seconds);
             }
-            Serial.print(F("WAIT SECONDS: ")); Serial.println(seconds);
+            Serial.print("WAIT SECONDS: "); Serial.println(seconds);
             if (*cmd == '\0')
             {
                 sWaitNextSerialCommand = millis() + uint32_t(min(max(int(seconds), 1), 600)) * 1000L;
@@ -2969,7 +2559,7 @@ bool processLifterCommand(const char* cmd)
                     seq = random(8);
                 }
                 while (seq == lifter.kLightKit_Off);
-                Serial.print(F("RAND: ")); Serial.println(seq);
+                Serial.print("RAND: "); Serial.println(seq);
                 cmd++;
             }
             else
@@ -2984,7 +2574,7 @@ bool processLifterCommand(const char* cmd)
                     lifter.setLightShow(lifter.kLightKit_Off);
                     delay(10);
                 }
-                Serial.print(F("LIGHT: ")); Serial.println(seq);
+                Serial.print("LIGHT: "); Serial.println(seq);
                 lifter.setLightShow(seq);
             }
             break;
@@ -2998,13 +2588,13 @@ bool processLifterCommand(const char* cmd)
             lifter.ensureSafetyManeuver();
             if (!lifter.lifterBottomLimit())
             {
-                uint32_t speed = sMinimumPower;
+                uint32_t speed = sSettings.fMinimumPower;
                 lifter.rotateHome();
                 lifter.setLightShow(lifter.kLightKit_Off);
                 lifter.rotateHome();
                 if (isdigit(*cmd))
                 {
-                    speed = min(max(strtolu(cmd, &cmd), sMinimumPower), 100u);
+                    speed = min(max(strtolu(cmd, &cmd), sSettings.fMinimumPower), 100u);
                 }
                 if (!lifter.seekToPosition(0, speed/100.0))
                 {
@@ -3021,7 +2611,7 @@ bool processLifterCommand(const char* cmd)
             // stop move mode
             lifter.moveModeEnd();
 
-            Serial.println(F("Invalid"));
+            Serial.println("Invalid");
             return false;
     }
     return true;
@@ -3035,13 +2625,17 @@ void processConfigureCommand(const char* cmd)
         if (!lifter.calibrate())
             lifter.disableMotors();
     }
+    else if (strcmp(cmd, "#PRC") == 0)
+    {
+        sRCMode = !sRCMode;
+    }
     else if (startswith(cmd, "#PZERO"))
     {
-        lifter.clearCommandsFromEEPROM();
+        sSettings.clearCommands();
     }
     else if (startswith(cmd, "#PL"))
     {
-        lifter.listSortedCommandsFromEEPROM();
+        sSettings.listSortedCommands(Serial);
     }
     else if (startswith(cmd, "#PD"))
     {
@@ -3049,25 +2643,25 @@ void processConfigureCommand(const char* cmd)
         {
             uint32_t seq = strtolu(cmd, &cmd);
             Serial.println(seq);
-            if (lifter.deleteCommandFromEEPROM(seq))
-                Serial.println(F("Deleted"));
+            if (sSettings.deleteCommand(seq))
+                Serial.println("Deleted");
         }
     }
     else if (startswith(cmd, "#PBAUD"))
     {
         uint32_t baudrate = strtolu(cmd, &cmd);
-        if (baudrate > 1200 && sBaudRate != baudrate)
+        if (baudrate > 1200 && sSettings.fBaudRate != baudrate)
         {
-            sBaudRate = baudrate;
-            Serial.print("Reboot baud rate: "); Serial.println(sBaudRate);
-            lifter.writeSettingsToEEPROM();
+            sSettings.fBaudRate = baudrate;
+            Serial.print("Reboot baud rate: "); Serial.println(sSettings.fBaudRate);
+            sSettings.write();
         }
     }
     else if (startswith(cmd, "#PR"))
     {
-        sDisableRotary = !sDisableRotary;
-        lifter.writeSettingsToEEPROM();
-        Serial.println(sDisableRotary ? "Disabled" : "Enabled");
+        sSettings.fDisableRotary = !sSettings.fDisableRotary;
+        sSettings.write();
+        Serial.println(sSettings.fDisableRotary ? "Disabled" : "Enabled");
         void (*resetArduino)() = NULL;
         Serial.flush(); delay(1000);
         resetArduino();
@@ -3079,24 +2673,24 @@ void processConfigureCommand(const char* cmd)
             Serial.println("LIFT");
             // PNCL - lifter limit normally closed
             // PNOL - lifter limit normally open
-           if ((cmd[0] == 'C' && lifter.fLifterLimitSetting) || 
-                (cmd[0] == 'O' && !lifter.fLifterLimitSetting))
+           if ((cmd[0] == 'C' && sSettings.fLifterLimitSetting) || 
+                (cmd[0] == 'O' && !sSettings.fLifterLimitSetting))
             {
                 Serial.println("Changed");
-                lifter.fLifterLimitSetting = !lifter.fLifterLimitSetting;
-                lifter.writeSettingsToEEPROM();
+                sSettings.fLifterLimitSetting = !sSettings.fLifterLimitSetting;
+                sSettings.write();
             }
         }
         else if (cmd[1] == 'R')
         {
             // PNCR - rotary limit normally closed
             // PNOR - rotary limit normally open
-            if ((cmd[0] == 'C' && lifter.fRotaryLimitSetting) || 
-                (cmd[0] == 'O' && !lifter.fRotaryLimitSetting))
+            if ((cmd[0] == 'C' && sSettings.fRotaryLimitSetting) || 
+                (cmd[0] == 'O' && !sSettings.fRotaryLimitSetting))
             {
                 Serial.println("Changed");
-                lifter.fRotaryLimitSetting = !lifter.fRotaryLimitSetting;
-                lifter.writeSettingsToEEPROM();
+                sSettings.fRotaryLimitSetting = !sSettings.fRotaryLimitSetting;
+                sSettings.write();
             }
         }
     }
@@ -3120,7 +2714,7 @@ void processConfigureCommand(const char* cmd)
                         if (*cmd == ',')
                         {
                             uint32_t speedpercentage = strtolu(cmd+1, &cmd);
-                            speedpercentage = max(min(max(int(speedpercentage), 0), 100), int(sMinimumPower));
+                            speedpercentage = max(min(max(int(speedpercentage), 0), 100), int(sSettings.fMinimumPower));
                             speed = speedpercentage / 100.0;
                         }
                         pos = min(max(int(pos), 0), 100);
@@ -3191,14 +2785,14 @@ void processConfigureCommand(const char* cmd)
                         Serial.print((relative) ? "Relative" : "Absolute");
                         Serial.print(" Degrees: ");
                         if (randdegrees)
-                            Serial.print(F("Random"));
+                            Serial.print("Random");
                         else
                             Serial.print(degrees);
                         if (speed != 0 || randspeed)
                         {
-                            Serial.print(F(" Speed: "));
+                            Serial.print(" Speed: ");
                             if (randspeed)
-                                Serial.print(F("Random"));
+                                Serial.print("Random");
                             else
                                 Serial.print(speed);
                         }
@@ -3216,7 +2810,7 @@ void processConfigureCommand(const char* cmd)
                     case 'M':
                     {
                         // move
-                        int nextLifterSpeed = sMinimumPower+5;
+                        int nextLifterSpeed = sSettings.fMinimumPower+5;
                         int nextRotarySpeed = ROTARY_MINIMUM_POWER+5;
                         int nextIntervalMin = MOVEMODE_MAX_INTERVAL;
                         int nextIntervalMax = MOVEMODE_MAX_INTERVAL;
@@ -3225,7 +2819,7 @@ void processConfigureCommand(const char* cmd)
                         {
                             // command lifter speed
                             nextLifterSpeed = strtolu(cmd+1, &cmd);
-                            nextLifterSpeed = max(nextLifterSpeed, int(sMinimumPower));
+                            nextLifterSpeed = max(nextLifterSpeed, int(sSettings.fMinimumPower));
                         }
                         if (*cmd == ',')
                         {
@@ -3269,9 +2863,9 @@ void processConfigureCommand(const char* cmd)
                         }
                         seconds = strtolu(cmd, &cmd);
                         seconds = min(max(seconds, 0), 600);
-                        Serial.print(F("Wait Seconds: "));
+                        Serial.print("Wait Seconds: ");
                         if (randseconds)
-                            Serial.println(F("Random"));
+                            Serial.println("Random");
                         else
                             Serial.println(seconds);
                         break;
@@ -3292,9 +2886,9 @@ void processConfigureCommand(const char* cmd)
                             seq = strtolu(cmd, &cmd);
                         }
                         seq = min(max(seq, 0), 7);
-                        Serial.print(F("Light Kit Sequence: "));
+                        Serial.print("Light Kit Sequence: ");
                         if (randseq)
-                            Serial.println(F("Random"));
+                            Serial.println("Random");
                         else
                             Serial.println(seq);
                         break;
@@ -3302,12 +2896,12 @@ void processConfigureCommand(const char* cmd)
                     case 'H':
                     {
                         // return home
-                        unsigned speed = sMinimumPower; cmd++;
+                        unsigned speed = sSettings.fMinimumPower; cmd++;
                         if (isdigit(*cmd))
                         {
-                            speed = min(unsigned(max(strtolu(cmd, &cmd), sMinimumPower)), 100u);
+                            speed = min(unsigned(max(strtolu(cmd, &cmd), sSettings.fMinimumPower)), 100u);
                         }
-                        Serial.print(F("Return Home: Speed: ")); Serial.println(speed);
+                        Serial.print("Return Home: Speed: "); Serial.println(speed);
                         break;
                     }
                     default:
@@ -3320,7 +2914,7 @@ void processConfigureCommand(const char* cmd)
                 }
                 else if (cmd == nullptr || *cmd != '\0')
                 {
-                    Serial.println(F("Invalid"));
+                    Serial.println("Invalid");
                     Serial.println(cmd);
                     cmd = nullptr;
                     break;
@@ -3328,20 +2922,20 @@ void processConfigureCommand(const char* cmd)
             }
             if (cmd != nullptr && *cmd == '\0')
             {
-                Serial.print(F("Sequence ["));
+                Serial.print("Sequence [");
                 Serial.print(storeseq);
-                Serial.print(F("]: "));
+                Serial.print("]: ");
                 Serial.println(startcmd);
                 sCmdBuffer[0] = '\0';
-                if (lifter.writeCommandToEEPROM(storeseq, startcmd))
-                    Serial.println(F("Stored"));
+                if (sSettings.writeCommand(storeseq, startcmd))
+                    Serial.println("Stored");
                 else
-                    Serial.println(F("Failed"));
+                    Serial.println("Failed");
             }
         }
         else
         {
-            Serial.println(F("Invalid"));
+            Serial.println("Invalid");
         }
     }
 }
@@ -3355,7 +2949,7 @@ bool processCommand(const char* cmd, bool firstCommand)
     {
         if (cmd[0] != ':')
         {
-            Serial.println(F("Invalid"));
+            Serial.println("Invalid");
             return false;
         }
         return processLifterCommand(cmd+1);
@@ -3370,7 +2964,7 @@ bool processCommand(const char* cmd, bool firstCommand)
             processConfigureCommand(cmd);
             return true;
         default:
-            Serial.println(F("Invalid"));
+            Serial.println("Invalid");
             break;
     }
     return false;
@@ -3405,7 +2999,7 @@ void loop()
             if (!processCommand(sCmdBuffer, !sCmdNextCommand))
             {
                 // command invalid abort buffer
-                DEBUG_PRINT(F("Unrecognized: ")); DEBUG_PRINTLN(sCmdBuffer);
+                DEBUG_PRINT("Unrecognized: "); DEBUG_PRINTLN(sCmdBuffer);
                 sWaitNextSerialCommand = 0;
                 end = nullptr;
             }
@@ -3413,7 +3007,7 @@ void loop()
             {
                 *end = ':';
                 strcpy(sCmdBuffer, end);
-                DEBUG_PRINT(F("REMAINS: "));
+                DEBUG_PRINT("REMAINS: ");
                 DEBUG_PRINTLN(sCmdBuffer);
                 sCmdNextCommand = true;
             }
@@ -3431,7 +3025,7 @@ void loop()
             if (!processCommand(sBuffer, !sNextCommand))
             {
                 // command invalid abort buffer
-                DEBUG_PRINT(F("Unrecognized: ")); DEBUG_PRINTLN(sBuffer);
+                DEBUG_PRINT("Unrecognized: "); DEBUG_PRINTLN(sBuffer);
                 sWaitNextSerialCommand = 0;
                 end = nullptr;
             }
@@ -3440,7 +3034,7 @@ void loop()
                 *end = ':';
                 strcpy(sBuffer, end);
                 sPos = strlen(sBuffer);
-                DEBUG_PRINT(F("REMAINS: "));
+                DEBUG_PRINT("REMAINS: ");
                 DEBUG_PRINTLN(sBuffer);
                 sNextCommand = true;
             }
@@ -3468,21 +3062,60 @@ void loop()
         if (sHome)
             Serial.println("HOME");
     }
-    static PCF8574::DigitalInput sLastFlags;
-    PCF8574::DigitalInput sNowFlags;
-    sNowFlags = sGPIOExpander.digitalReadAll();
-    if (memcmp(&sLastFlags, &sNowFlags, sizeof(sLastFlags)) != 0)
+    if (sDigitalReadAll)
     {
-        printf("p0: %d\n", sNowFlags.p0);
-        printf("p1: %d\n", sNowFlags.p1);
-        printf("p2: %d\n", sNowFlags.p2);
-        printf("p3: %d\n", sNowFlags.p3);
-        printf("p4: %d\n", sNowFlags.p4);
-        printf("p5: %d\n", sNowFlags.p5);
-        printf("p6: %d\n", sNowFlags.p6);
-        printf("p7: %d\n", sNowFlags.p7);
-        sLastFlags = sNowFlags;
+        sDigitalReadAll = false;
+        static PCF8574::DigitalInput sLastFlags;
+        PCF8574::DigitalInput sNowFlags;
+        sNowFlags = sGPIOExpander.digitalReadAll();
+        if (memcmp(&sLastFlags, &sNowFlags, sizeof(sLastFlags)) != 0)
+        {
+            sLastFlags = sNowFlags;
+        }
     }
+    if (sRCMode)
+    {
+        int16_t channels[6];
+        for (uint16_t i = 0; i < SizeOfArray(channels); i++)
+        {
+            channels[i] = ((int)sPPM.latestValidChannelValue(i+1, 0) - 1000) / 10;
+        }
+        // if (channels[3])
+        // {
+        //     channels[3]
+        // }
+        // printf("1:%4u 2:%4u 3:%4u 4:%4u 5:%4u 6:%4u\n",
+        //     channels[0], channels[1], channels[2], channels[3], channels[4], channels[5]);
+        static uint32_t sLastReading;
+        if (sLastReading + 1000 < millis())
+        {
+            int height = channels[2];
+            static int sLastRCHeight;
+            if (height >= 0 && height <= 100 && abs(height - sLastRCHeight) > 10)
+            {
+                snprintf(sBuffer, sizeof(sBuffer), ":PP%d,%d", height, 50);
+                runSerialCommand();
+                printf("NEW HEIGHT : %d\n", height);
+                sLastRCHeight = height;
+            }
+            sLastReading = millis();
+        }
+    }
+    // if (sPPM.decode())
+    // {
+    //     uint16_t channels[6];
+    //     for (uint16_t i = 0; i < SizeOfArray(channels); i++)
+    //     {
+    //         channels[i] = sPPM.channel(i, 0, 1024, 512);
+    //     }
+    //     // Throttle
+    //     if (channels[3] > 0)
+    //     {
+
+    //     }
+    //     // printf("1:%4u 2:%4u 3:%4u 4:%4u 5:%4u 6:%4u\n",
+    //     //     channels[0], channels[1], channels[2], channels[3], channels[4], channels[5]);
+    // }
 
 #ifdef USE_DEBUG
     static bool sLastTop;
@@ -3505,7 +3138,7 @@ void loop()
             int(sLastTop),
             int(sLastBot),
             int(sLastRot),
-            int(sLastLifter/float(sLifterDistance)*100.0),
+            int(sLastLifter/float(sSettings.fLifterDistance)*100.0),
             int(lifter.rotaryMotorCurrentPosition()),
             int(lifter.getRotaryPosition()),
             int(lifter.lifterMotorFault()));
