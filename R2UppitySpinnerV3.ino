@@ -238,15 +238,17 @@ PinManager sPinManager;
 #include "core/SingleStatusLED.h"
 enum {
     kNormalMode = 0,
-    kWifiMode = 1
+    kWifiMode = 1,
+    kStopMode = 2,
+    kSafetyMode = 3,
+    kMovingMode = 4
 };
 static constexpr uint8_t kStatusColors[][4][3] = {
       { {  0,   2,    0} , {   0,    2,    0} , {  0,   2,    0} , {   0,    2,    0}  },  // normal (all green)
       { {  0,   0,    2} , {   0,    0,    2} , {  0,   0,    2} , {   0,    0,    2}  },  // wifi enabled (all blue)
       { {  2,   0,    0} , {   2,    0,    0} , {  2,   0,    0} , {   2,    0,    0}  },  // all red
-      { {  0,   0,   10} , {  10,   10,   10} , {  0,   0,   10} , {  10,   10,   10}  },  // blue,white,blue,white
-      { {  0,   0,   10} , {   0,   10,    0} , {  0,   0,   10} , {   0,   10,    0}  },  // blue,green,blue,green
-      { {  10,  0,    0} , {   0,    0,   10} , { 10,   0,    0} , {   0,    0,   10}  }   // red,blue,red,blue
+      { {  0,   2,    2} , {   0,    2,    2} , {  0,   2,    2} , {   0,    2,    2}  },  // all yellow
+      { {  0,   0,   10} , {  10,    0,    0} , {  0,   0,   10} , {  10,    0,    0}  }  // blue,green,blue,green
 };
 typedef SingleStatusLED<PIN_STATUSLED> StatusLED;
 StatusLED statusLED(kStatusColors, SizeOfArray(kStatusColors));
@@ -532,6 +534,7 @@ public:
         sPinManager.digitalWrite(PIN_MOTOR_ENB, HIGH);
 
         fMotorsEnabled = false;
+        statusLED.setMode(kStopMode);
     }
 
     static void enableMotors()
@@ -541,6 +544,7 @@ public:
 
         fMotorsEnabled = true;
         fMotorsEnabledTime = millis();
+        statusLED.setMode(kMovingMode);
     }
 
     static inline void dualAnalogWrite(uint8_t m1, float v1, uint8_t m2, float v2)
@@ -583,6 +587,7 @@ public:
         enableMotors();
         dualAnalogWrite(PIN_LIFTER_PWM1, 0, PIN_LIFTER_PWM2, 0);
         fLifterThrottle = 0;
+        statusLED.setMode(kStopMode);
     }
 
     ///////////////////////////////////
@@ -930,15 +935,23 @@ public:
         while (!rotaryHomeLimit())
         {
             rotaryMotorMove(speed);
-            delay(3);
+            uint32_t startMillis = millis();
+            while (startMillis + 3 < millis())
+            {
+                if (rotaryHomeLimit())
+                    goto home;
+            }
             rotaryMotorStop();
-            delay(1);
+            startMillis = millis();
+            while (startMillis + 1 < millis() && !rotaryHomeLimit())
+                ;
             if (!rotaryStatus.isMoving())
             {
                 DEBUG_PRINTLN("ABORT");
                 break;
             }
         }
+    home:
         rotaryMotorStop();
         encoder_rotary_stop_limit = false;
     #endif
@@ -1394,6 +1407,7 @@ public:
 
     static bool ensureSafetyManeuver()
     {
+        statusLED.setMode(kSafetyMode);
         if (!sSafetyManeuver)
         {
             if (!safetyManeuver())
@@ -2153,16 +2167,17 @@ PeriscopeLifter::measureRotaryEncoder()
             encoder_rotary_ticks++;
         }
         encoder_rotary_changed++;
-        if (encoder_rotary_stop_limit && rotaryHomeLimit())
-        {
-            encoder_rotary_stop_ticks = encoder_rotary_ticks;
-            // Stop rotary motor if limit switch was hit
-            fRotarySpeed = 0;
-            ::analogWrite(PIN_ROTARY_PWM1, 0);
-            ::analogWrite(PIN_ROTARY_PWM2, 0);
-            fRotaryThrottle = 0;
-            fRotaryMoving = false;
-        }
+        // UNSAFE cannot be called from PinInterrupt
+        // if (encoder_rotary_stop_limit && rotaryHomeLimit())
+        // {
+        //     encoder_rotary_stop_ticks = encoder_rotary_ticks;
+        //     // Stop rotary motor if limit switch was hit
+        //     fRotarySpeed = 0;
+        //     ::analogWrite(PIN_ROTARY_PWM1, 0);
+        //     ::analogWrite(PIN_ROTARY_PWM2, 0);
+        //     fRotaryThrottle = 0;
+        //     fRotaryMoving = false;
+        // }
     }
     encoder_rotary_pin_A_last = encoder_rotary_val;
 }
