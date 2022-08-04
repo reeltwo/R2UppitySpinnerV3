@@ -1,35 +1,29 @@
 #define USE_DEBUG
 //#define USE_LEDLIB 0
-#define USE_SDCARD
-#define USE_SPIFFS
+#define USE_WIFI
+#define USE_WIFI_WEB
+#define USE_MDNS
 #define USE_OTA
-
-#include "ReelTwo.h"
-#include "core/SetupEvent.h"
-#include "core/AnimatedEvent.h"
-#include "analogWrite.h"
-#include "encoder/PPMReader.h"
-//#include "core/Enthropy.h"
-#include "Wire.h"
-#include "PCF8574.h"
-#ifdef USE_OTA
-#include <ArduinoOTA.h>
-#endif
-
-#ifdef USE_SPIFFS
-#include "SPIFFS.h"
-#define USE_FS SPIFFS
-#endif
-#include "FS.h"
-#include "SPI.h"
-#ifdef USE_SDCARD
-#include "SD.h"
-#endif
 
 // #define DISABLE_ROTARY
 
 ///////////////////////////////////
 // CONFIGURABLE OPTIONS
+///////////////////////////////////
+
+// Replace with your network credentials
+#ifdef USE_WIFI
+#define WIFI_ENABLED         true
+// Set these to your desired credentials.
+#define WIFI_AP_NAME         "R2Uppity"
+#define WIFI_AP_PASSPHRASE   "Astromech"
+#define WIFI_ACCESS_POINT    true  /* true if access point: false if joining existing wifi */
+#endif
+
+#define MARC_SERIAL_BAUD_RATE           9600
+#define MARC_SERIAL_ENABLED             true
+#define MARC_WIFI_ENABLED               false
+
 ///////////////////////////////////
 
 // If debug is enabled the serial baud rate will be 57600
@@ -40,7 +34,6 @@
 #define ROTARY_THROTTLE_DECELERATION_SCALE  20
 #define ROTARY_THROTTLE_LATENCY             25
 #define ROTARY_FUDGE_POSITION               5
-#define EEPROM_SIZE                         4096
 
 // Default random duration of 'M' movement mode
 #define MOVEMODE_MIN_DURATION               30      // minimum 30 seconds
@@ -96,8 +89,8 @@
 #define PIN_LIFTER_PWM2        33
 #define PIN_LIFTER_DIAG        36
 
-// #define PIN_MOTOR_EN           2
-// #define PIN_MOTOR_ENB          12
+#define PIN_LIFTER_TOPLIMIT    18
+#define PIN_LIFTER_BOTLIMIT    19
 
 ///////////////////////////////////
 // --- Rotary mechanism
@@ -110,17 +103,28 @@
 #define PIN_ROTARY_PWM2        26
 #define PIN_ROTARY_DIAG        39
 
-#define PIN_GPIO_INTERRUPT     17
+#define PIN_ROTARY_LIMIT       23
 
-// TODO GPIO EXPANDER
-#define EPIN_ROTARY_LIMIT       0  //  1
-#define EPIN_LIGHTKIT_A         1  //  2
-#define EPIN_LIGHTKIT_B         2  //  4
-#define EPIN_LIGHTKIT_C         3  //  8
-#define EPIN_MOTOR_EN           4  // 10
-#define EPIN_MOTOR_ENB          5  // 20
-#define EPIN_LIFTER_BOTLIMIT    6  // 40
-#define EPIN_LIFTER_TOPLIMIT    7  // 80
+///////////////////////////////////
+
+#define PIN_STATUSLED          5
+#define PIN_PPMIN_RC           14
+#define PIN_RXD2               16
+
+///////////////////////////////////
+
+#define PIN_GPIO_INTERRUPT     17
+#define USE_I2C_GPIO_EXPANDER
+#define GPIO_PIN_BASE           200
+
+#define PIN_INPUT_A             GPIO_PIN_BASE+0   /* INPUT A */
+#define PIN_LIGHTKIT_A          GPIO_PIN_BASE+1
+#define PIN_LIGHTKIT_B          GPIO_PIN_BASE+2
+#define PIN_LIGHTKIT_C          GPIO_PIN_BASE+3
+#define PIN_MOTOR_EN            GPIO_PIN_BASE+4
+#define PIN_MOTOR_ENB           GPIO_PIN_BASE+5
+#define PIN_INPUT_B             GPIO_PIN_BASE+6   /* INPUT B */
+#define PIN_INPUT_C             GPIO_PIN_BASE+7   /* INPUT B */
 
 //////////////////////////////
 // LIGHT KIT TRI-STATE
@@ -140,20 +144,112 @@
 //                                      The Main White LED’s are ON, the side LED’s are White, the Lower 
 //                                      Rectangular Red LED’s are All On, and the Rear LED’s are Blinking Red.
 // GND GND GND     (Switch Position 7): Sparkle: All White LED’s randomly Flash
+///////////////////////////////////
+
+#define PREFERENCE_WIFI_ENABLED         "wifi"
+#define PREFERENCE_WIFI_SSID            "ssid"
+#define PREFERENCE_WIFI_PASS            "pass"
+#define PREFERENCE_WIFI_AP              "ap"
+
+#define PREFERENCE_MARCSERIAL           "mserial"
+#define PREFERENCE_MARCWIFI_ENABLED     "mwifi"
 
 ///////////////////////////////////
 
-#define PIN_PPMIN_RC           14
-#define PIN_RXD2               16
-#define PIN_STATUSLED          5
-#define PIN_SD_CS              4
+#include "ReelTwo.h"
+#include "core/SetupEvent.h"
+#include "core/AnimatedEvent.h"
+#include "analogWrite.h"
+#include "encoder/PPMReader.h"
+#include "Wire.h"
+#ifdef USE_WIFI
+ #include "wifi/WifiAccess.h"
+ #include <ESPmDNS.h>
+ #ifdef USE_WIFI_WEB
+  #include "wifi/WifiWebServer.h"
+ #endif
+#endif
+#ifdef USE_OTA
+#include <ArduinoOTA.h>
+#endif
+#include <Preferences.h>
+
+Preferences preferences;
+
+///////////////////////////////////
+
+#include "core/PinManager.h"
+
+#ifdef USE_I2C_GPIO_EXPANDER
+#include "PCF8574.h"
+#ifndef GPIO_EXPANDER_ADDRESS
+#define GPIO_EXPANDER_ADDRESS 0x20
+#endif
+
+class CustomPinManager : public PinManager
+{
+public:
+    CustomPinManager(byte i2cAddress = GPIO_EXPANDER_ADDRESS) :
+        fGPIOExpander(i2cAddress)
+    {}
+
+    virtual bool digitalRead(uint8_t pin) override
+    {
+        if (pin >= GPIO_PIN_BASE)
+        {
+            return fGPIOExpander.digitalRead(pin-GPIO_PIN_BASE, true);
+        }
+        return PinManager::digitalRead(pin);
+    }
+    virtual void digitalWrite(uint8_t pin, uint8_t val) override
+    {
+        if (pin >= GPIO_PIN_BASE)
+        {
+            fGPIOExpander.digitalWrite(pin-GPIO_PIN_BASE, val);
+        }
+        else
+        {
+            PinManager::digitalWrite(pin, val);
+        }
+    }
+    virtual void pinMode(uint8_t pin, uint8_t mode) override
+    {
+        if (pin >= GPIO_PIN_BASE)
+        {
+            fGPIOExpander.pinMode(pin-GPIO_PIN_BASE, mode);
+        }
+        else
+        {
+            PinManager::pinMode(pin, mode);
+        }
+    }
+
+protected:
+    PCF8574 fGPIOExpander;
+};
+CustomPinManager sPinManager;
+#else
+PinManager sPinManager;
+#endif
 
 ///////////////////////////////////
 
 #ifdef PIN_STATUSLED
 #include "core/SingleStatusLED.h"
+enum {
+    kNormalMode = 0,
+    kWifiMode = 1
+};
+static constexpr uint8_t kStatusColors[][4][3] = {
+      { {  0,   2,    0} , {   0,    2,    0} , {  0,   2,    0} , {   0,    2,    0}  },  // normal (all green)
+      { {  0,   0,    2} , {   0,    0,    2} , {  0,   0,    2} , {   0,    0,    2}  },  // wifi enabled (all blue)
+      { {  2,   0,    0} , {   2,    0,    0} , {  2,   0,    0} , {   2,    0,    0}  },  // all red
+      { {  0,   0,   10} , {  10,   10,   10} , {  0,   0,   10} , {  10,   10,   10}  },  // blue,white,blue,white
+      { {  0,   0,   10} , {   0,   10,    0} , {  0,   0,   10} , {   0,   10,    0}  },  // blue,green,blue,green
+      { {  10,  0,    0} , {   0,    0,   10} , { 10,   0,    0} , {   0,    0,   10}  }   // red,blue,red,blue
+};
 typedef SingleStatusLED<PIN_STATUSLED> StatusLED;
-StatusLED statusLED;
+StatusLED statusLED(kStatusColors, SizeOfArray(kStatusColors));
 #endif
 
 ///////////////////////////////////
@@ -165,6 +261,7 @@ StatusLED statusLED;
 #include "core/EEPROMSettings.h"
 
 ///////////////////////////////////
+
 #define ENCODER_STATUS_RATE 200 // ms (10Hz)
 
 struct OutputLimit
@@ -201,6 +298,8 @@ struct LifterSettings
 };
 EEPROMSettings<LifterSettings> sSettings;
 
+///////////////////////////////////
+
 static bool sCalibrating;
 static bool sSafetyManeuver;
 static unsigned sRotaryCircleEncoderCount;
@@ -228,78 +327,18 @@ static void resetSerialCommand()
     sPos = 0;
 }
 
+static void executeCommand(const char* cmd, ...)
+{
+    va_list targ;
+    sPos = 0;
+    va_start(targ, cmd);
+    vsnprintf(sBuffer, sizeof(sBuffer), cmd, targ);
+    va_end(targ);
+    sPos = strlen(sBuffer);
+    runSerialCommand();
+}
+
 ///////////////////////////////////
-
-static bool sVSPIStarted;
-static bool sSDCardMounted;
-
-bool getSDCardMounted()
-{
-    return sSDCardMounted;
-}
-
-bool ensureVSPIStarted()
-{
-    if (!sVSPIStarted)
-    {
-        sVSPIStarted = true;
-        SPI.begin();
-        SPI.setFrequency(1000000);
-    }
-    return true;
-}
-
-bool mountReadOnlyFileSystem()
-{
-#ifdef USE_SPIFFS
-    return (SPIFFS.begin(true));
-#endif
-    return false;
-}
-
-bool mountSDFileSystem()
-{
-#ifdef USE_SDCARD
-    if (!ensureVSPIStarted())
-        return false;
-    if (SD.begin(PIN_SD_CS))
-    {
-        DEBUG_PRINTLN("Card Mount Success");
-        sSDCardMounted = true;
-        return true;
-    }
-    DEBUG_PRINTLN("Card Mount Failed");
-#endif
-    return false;
-}
-
-void unmountSDFileSystem()
-{
-#ifdef USE_SDCARD
-    if (sSDCardMounted)
-    {
-        sSDCardMounted = false;
-        SD.end();
-    }
-    if (sVSPIStarted)
-    {
-        SPI.end();
-    }
-#endif
-}
-
-void unmountFileSystems()
-{
-    unmountSDFileSystem();
-#ifdef USE_FATFS
-    FFat.end();
-#endif
-#ifdef USE_SPIFFS
-    SPIFFS.end();
-#endif
-}
-
-/////////////////////////////////////////////////////////////////////////
 
 static volatile bool sDigitalReadAll;
 
@@ -311,65 +350,9 @@ static void IRAM_ATTR flagDigitalReadAll()
 PCF8574 sGPIOExpander(0x20, PIN_GPIO_INTERRUPT, flagDigitalReadAll);
 PPMReader sPPM(PIN_PPMIN_RC, 6);
 
-void scan_i2c()
+void unmountFileSystems()
 {
-    unsigned nDevices = 0;
-    for (byte address = 1; address < 127; address++)
-    {
-        String name = "<unknown>";
-        Wire.beginTransmission(address);
-        byte error = Wire.endTransmission();
-        if (address == 0x70)
-        {
-            // All call address for PCA9685
-            name = "PCA9685:all";
-        }
-        if (address == 0x40)
-        {
-            // Adafruit PCA9685
-            name = "PCA9685";
-        }
-        if (address == 0x20)
-        {
-            name = "GPIO Expander";
-        }
-        if (address == 0x16)
-        {
-            // PSIPro
-            name = "PSIPro";
-        }
-        if (error == 0)
-        {
-            Serial.print("I2C device found at address 0x");
-            if (address < 16)
-                Serial.print("0");
-            Serial.print(address, HEX);
-            Serial.print(" ");
-            Serial.println(name);
-            nDevices++;
-        }
-        else if (error == 4)
-        {
-            Serial.print("Unknown error at address 0x");
-            if (address < 16)
-                Serial.print("0");
-            Serial.println(address, HEX);
-        }
-    }
-    if (nDevices == 0)
-        Serial.println("No I2C devices found\n");
-    else
-        Serial.println("done\n");
-}
 
-bool getExpanderPin(uint8_t pin)
-{
-    return sGPIOExpander.digitalRead(pin, true);
-}
-
-static void setExpanderPin(uint8_t pinNumber, uint8_t val)
-{
-    sGPIOExpander.digitalWrite(pinNumber, val);
 }
 
 ///////////////////////////////////
@@ -470,13 +453,13 @@ public:
 
     static bool lifterTopLimit()
     {
-        bool limit = (getExpanderPin(EPIN_LIFTER_TOPLIMIT) == sSettings.fLifterLimitSetting);
+        bool limit = (sPinManager.digitalRead(PIN_LIFTER_TOPLIMIT) == sSettings.fLifterLimitSetting);
         return limit;
     }
 
     static bool lifterBottomLimit()
     {
-        bool limit = (getExpanderPin(EPIN_LIFTER_BOTLIMIT) == sSettings.fLifterLimitSetting);
+        bool limit = (sPinManager.digitalRead(PIN_LIFTER_BOTLIMIT) == sSettings.fLifterLimitSetting);
         return limit;
     }
 
@@ -497,7 +480,7 @@ public:
         // No rotary unit. Always in home position
         return true;
     #else
-        bool limit = sSettings.fDisableRotary || (getExpanderPin(EPIN_ROTARY_LIMIT) == sSettings.fRotaryLimitSetting);
+        bool limit = sSettings.fDisableRotary || (sPinManager.digitalRead(PIN_ROTARY_LIMIT) == sSettings.fRotaryLimitSetting);
         return limit;
     #endif
     }
@@ -545,22 +528,17 @@ public:
 
     static void disableMotors()
     {
-        setExpanderPin(EPIN_MOTOR_EN, LOW);
-        setExpanderPin(EPIN_MOTOR_ENB, HIGH);
+        sPinManager.digitalWrite(PIN_MOTOR_EN, LOW);
+        sPinManager.digitalWrite(PIN_MOTOR_ENB, HIGH);
 
-        // digitalWrite(PIN_MOTOR_EN, LOW);
-        // digitalWrite(PIN_MOTOR_ENB, HIGH);
         fMotorsEnabled = false;
     }
 
     static void enableMotors()
     {
-        // TODO ENABLE MOTORS
-        setExpanderPin(EPIN_MOTOR_EN, HIGH);
-        setExpanderPin(EPIN_MOTOR_ENB, LOW);
+        sPinManager.digitalWrite(PIN_MOTOR_EN, HIGH);
+        sPinManager.digitalWrite(PIN_MOTOR_ENB, LOW);
 
-        // digitalWrite(PIN_MOTOR_EN, HIGH);
-        // digitalWrite(PIN_MOTOR_ENB, LOW);
         fMotorsEnabled = true;
         fMotorsEnabledTime = millis();
     }
@@ -569,30 +547,8 @@ public:
     {
         const auto output1{static_cast<int32_t>(abs(v1) * 255)};
         const auto output2{static_cast<int32_t>(abs(v2) * 255)};
-        // if (m1 == kPWM1_Timer0 && m2 == kPWM2_Timer0)
-        // {
-        //     OCR0A = output1;
-        //     OCR0B = output2;
-        // }
-        // else if (m1 == kPWM1_Timer1 && m2 == kPWM2_Timer1)
-        // {
-        //     const auto output1{static_cast<uint16_t>(abs(v1) * 799)};
-        //     const auto output2{static_cast<uint16_t>(abs(v2) * 799)};
-        //     OCR1A = output1;
-        //     OCR1B = output2;
-        // }
-        // else if (m1 == kPWM1_Timer2 && m2 == kPWM2_Timer2)
-        // {
-        //     OCR2A = output1;
-        //     OCR2B = output2;
-        // }
-        // else
-        {
-            // Serial.print("dualAnalogWrite "); Serial.print(output1); Serial.print(", "); Serial.println(output2);
-            // TODO IMPLEMENT FOR ESP32
-            ::analogWrite(m1, output1);
-            ::analogWrite(m2, output2);
-        }
+        ::analogWrite(m1, output1);
+        ::analogWrite(m2, output2);
     }
 
     ///////////////////////////////////
@@ -1099,12 +1055,21 @@ public:
     //
     // 7: Sparkle: All White LED’s randomly Flash
     //
-    static void setLightShow(unsigned show)
+    static int getLightShow()
     {
-        setExpanderPin(EPIN_LIGHTKIT_A, !((show>>2)&1));
-        setExpanderPin(EPIN_LIGHTKIT_B, !((show>>1)&1));
-        setExpanderPin(EPIN_LIGHTKIT_C, !((show>>0)&1));
+        return fLightShow;
     }
+
+    static void setLightShow(int show)
+    {
+        fLightShow = show;
+        sPinManager.digitalWrite(PIN_LIGHTKIT_A, !((show>>2)&1));
+        sPinManager.digitalWrite(PIN_LIGHTKIT_B, !((show>>1)&1));
+        sPinManager.digitalWrite(PIN_LIGHTKIT_C, !((show>>0)&1));
+    }
+
+    static void IRAM_ATTR measureLifterEncoder();
+    static void IRAM_ATTR measureRotaryEncoder();
 
     virtual void setup() override
     {
@@ -1112,11 +1077,11 @@ public:
         // ENCODER PINS
         //////////////////////////
 
-        pinMode(PIN_LIFTER_ENCODER_A, INPUT);
-        pinMode(PIN_LIFTER_ENCODER_B, INPUT);
+        sPinManager.pinMode(PIN_LIFTER_ENCODER_A, INPUT);
+        sPinManager.pinMode(PIN_LIFTER_ENCODER_B, INPUT);
 
-        pinMode(PIN_ROTARY_ENCODER_A, INPUT);
-        pinMode(PIN_ROTARY_ENCODER_B, INPUT);
+        sPinManager.pinMode(PIN_ROTARY_ENCODER_A, INPUT);
+        sPinManager.pinMode(PIN_ROTARY_ENCODER_B, INPUT);
 
         attachInterrupt(
             digitalPinToInterrupt(PIN_LIFTER_ENCODER_A),
@@ -1130,45 +1095,67 @@ public:
         //////////////////////////
 
         // LIFTER
-        pinMode(PIN_LIFTER_PWM1, OUTPUT);
-        pinMode(PIN_LIFTER_PWM2, OUTPUT);
-        pinMode(PIN_LIFTER_DIAG, INPUT_PULLUP);
+        sPinManager.pinMode(PIN_LIFTER_PWM1, OUTPUT);
+        sPinManager.pinMode(PIN_LIFTER_PWM2, OUTPUT);
+        sPinManager.pinMode(PIN_LIFTER_DIAG, INPUT_PULLUP);
 
         // ROTARY
-        pinMode(PIN_ROTARY_PWM1, OUTPUT);
-        pinMode(PIN_ROTARY_PWM2, OUTPUT);
-        pinMode(PIN_ROTARY_DIAG, INPUT_PULLUP);
+        sPinManager.pinMode(PIN_ROTARY_PWM1, OUTPUT);
+        sPinManager.pinMode(PIN_ROTARY_PWM2, OUTPUT);
+        sPinManager.pinMode(PIN_ROTARY_DIAG, INPUT_PULLUP);
+
+        sPinManager.pinMode(PIN_ROTARY_LIMIT, INPUT_PULLUP);
+        sPinManager.pinMode(PIN_LIFTER_TOPLIMIT, INPUT_PULLUP);
+        sPinManager.pinMode(PIN_LIFTER_BOTLIMIT, INPUT_PULLUP);
+
+        //////////////////////////
+        // MOTOR ENABLE PINS
+        //////////////////////////
+
+        sPinManager.pinMode(PIN_MOTOR_EN, OUTPUT);
+        sPinManager.pinMode(PIN_MOTOR_ENB, OUTPUT);
 
         //////////////////////////
         // LIGHT KIT PINS
         //////////////////////////
 
-        // TODO
-        // pinMode(PIN_ROTARY_LIMIT, INPUT_PULLUP);
-        // pinMode(PIN_LIFTER_MEN, OUTPUT);
-        // pinMode(PIN_LIFTER_MENB, OUTPUT);
-        // pinMode(PIN_ROTARY_MEN, OUTPUT);
-        // pinMode(PIN_ROTARY_MENB, OUTPUT);
-        // pinMode(PIN_LIGHTKIT_A, OUTPUT);
-        // pinMode(PIN_LIGHTKIT_B, OUTPUT);
-        // pinMode(PIN_LIGHTKIT_C, OUTPUT);
+        sPinManager.pinMode(PIN_LIGHTKIT_A, OUTPUT);
+        sPinManager.pinMode(PIN_LIGHTKIT_B, OUTPUT);
+        sPinManager.pinMode(PIN_LIGHTKIT_C, OUTPUT);
 
-        //////////////////////////
+        //////////////////////////////
+        // ANALOG SEQUENCE SELECT PINS
+        //////////////////////////////
+
+        sPinManager.pinMode(PIN_INPUT_A, INPUT_PULLUP);
+        sPinManager.pinMode(PIN_INPUT_B, INPUT_PULLUP);
+        sPinManager.pinMode(PIN_INPUT_C, INPUT_PULLUP);
+        sPinManager.begin();
 
         setLightShow(kLightKit_Off);
 
         //////////////////////////
 
+    #ifdef EEPROM_SIZE
         if (!EEPROM.begin(EEPROM_SIZE))
         {
             println("Failed to initialize EEPROM");
         }
-        else if (sSettings.read())
+        else
+    #endif
+        if (sSettings.read())
         {
-            println("Read calibration");
+            Serial.println(F("Settings Restored"));
         }
-        //println("Generating random");
-        // randomSeed(Enthropy::generate());
+        else
+        {
+            Serial.println(F("First Time Settings"));
+            sSettings.write();
+            if (sSettings.read())
+            {
+                Serial.println(F("Readback Success"));
+            }
+        }
     }
 
     ///////////////////////////////////
@@ -1687,9 +1674,7 @@ public:
         }
 
         sSettings.fDownLimitsCalibrated = true;
-    #ifndef USE_DEBUG
-        writeSettingsToEEPROM();
-    #endif
+        sSettings.write();
         println("SUCCESS");
         sCalibrating = false;
         return true;
@@ -1806,51 +1791,6 @@ public:
     }
 
 private:
-    ///////////////////////////////////
-    // Read motor encoders
-    ///////////////////////////////////
-
-    static void measureLifterEncoder()
-    {
-        encoder_lifter_val = digitalRead(PIN_LIFTER_ENCODER_A);
-        if (encoder_lifter_pin_A_last == LOW && encoder_lifter_val == HIGH)
-        {
-            if (digitalRead(PIN_LIFTER_ENCODER_B) == LOW)
-            {
-                encoder_lifter_ticks--;
-            }
-            else
-            {
-                encoder_lifter_ticks++;
-            }
-            encoder_lifter_changed++;
-        }
-        encoder_lifter_pin_A_last = encoder_lifter_val;
-    }
-
-    static void measureRotaryEncoder()
-    {
-        encoder_rotary_val = digitalRead(PIN_ROTARY_ENCODER_A);
-        if (encoder_rotary_pin_A_last == LOW && encoder_rotary_val == HIGH)
-        {
-            if (digitalRead(PIN_ROTARY_ENCODER_B) == LOW)
-            {
-                encoder_rotary_ticks++;
-            }
-            else
-            {
-                encoder_rotary_ticks--;
-            }
-            encoder_rotary_changed++;
-            // if (encoder_rotary_stop_limit && rotaryHomeLimit())
-            // {
-            //     encoder_rotary_stop_ticks = encoder_rotary_ticks;
-            //     // Stop rotary motor if limit switch was hit
-            //     rotaryMotorStop();
-            // }
-        }
-        encoder_rotary_pin_A_last = encoder_rotary_val;
-    }
 
     ///////////////////////////////////
 
@@ -2165,6 +2105,7 @@ public:
     static uint32_t fRotaryEncoderLastStatus;
     static long fRotaryEncoderLastTick;
     static bool fRotaryMoving;
+    static int8_t fLightShow;
 
     static bool fMoveMode;
     static uint32_t fMoveModeNextCmd;
@@ -2173,6 +2114,58 @@ public:
     static uint8_t fMoveModeNextIntervalMin;
     static uint8_t fMoveModeNextIntervalMax;
 };
+
+///////////////////////////////////
+// Read motor encoders
+///////////////////////////////////
+
+void IRAM_ATTR
+PeriscopeLifter::measureLifterEncoder()
+{
+    encoder_lifter_val = digitalRead(PIN_LIFTER_ENCODER_A);
+    if (encoder_lifter_pin_A_last == LOW && encoder_lifter_val == HIGH)
+    {
+        if (digitalRead(PIN_LIFTER_ENCODER_B) == LOW)
+        {
+            encoder_lifter_ticks--;
+        }
+        else
+        {
+            encoder_lifter_ticks++;
+        }
+        encoder_lifter_changed++;
+    }
+    encoder_lifter_pin_A_last = encoder_lifter_val;
+}
+
+void IRAM_ATTR
+PeriscopeLifter::measureRotaryEncoder()
+{
+    encoder_rotary_val = digitalRead(PIN_ROTARY_ENCODER_A);
+    if (encoder_rotary_pin_A_last == LOW && encoder_rotary_val == HIGH)
+    {
+        if (digitalRead(PIN_ROTARY_ENCODER_B) == LOW)
+        {
+            encoder_rotary_ticks--;
+        }
+        else
+        {
+            encoder_rotary_ticks++;
+        }
+        encoder_rotary_changed++;
+        if (encoder_rotary_stop_limit && rotaryHomeLimit())
+        {
+            encoder_rotary_stop_ticks = encoder_rotary_ticks;
+            // Stop rotary motor if limit switch was hit
+            fRotarySpeed = 0;
+            ::analogWrite(PIN_ROTARY_PWM1, 0);
+            ::analogWrite(PIN_ROTARY_PWM2, 0);
+            fRotaryThrottle = 0;
+            fRotaryMoving = false;
+        }
+    }
+    encoder_rotary_pin_A_last = encoder_rotary_val;
+}
 
 volatile long PeriscopeLifter::encoder_lifter_ticks;
 long PeriscopeLifter::encoder_lifter_ticks_old;
@@ -2199,6 +2192,7 @@ uint32_t PeriscopeLifter::fRotaryThrottleUpdate;
 uint32_t PeriscopeLifter::fRotaryEncoderLastStatus;
 long PeriscopeLifter::fRotaryEncoderLastTick;
 bool PeriscopeLifter::fRotaryMoving;
+int8_t PeriscopeLifter::fLightShow;
 
 bool PeriscopeLifter::fMoveMode;
 uint32_t PeriscopeLifter::fMoveModeNextCmd;
@@ -2212,64 +2206,6 @@ uint8_t PeriscopeLifter::fMoveModeNextIntervalMax;
 PeriscopeLifter lifter;
 
 ///////////////////////////////////////////////////////
-
-void setup()
-{
-    REELTWO_READY();
-
-    mountSDFileSystem();
-
-    delay(200);
-
-    if (getSDCardMounted())
-    {
-        File binImage = SD.open("/UPPITY.BIN");
-        if (binImage)
-        {
-            Serial.println("Firmware image found on SD card");
-            Serial.print("Reflashing");
-            Update.begin(binImage.size());
-            uint32_t readSize = 0;
-            while (binImage.available())
-            {
-                uint8_t buf = binImage.read();
-                Update.write(&buf, 1);
-                readSize++;
-                if ((readSize % 102400) == 0)
-                    Serial.print(".");
-            }
-            Serial.println("");
-            binImage.close();
-            // Delete the image file so we don't constantly reflash the box
-            SD.remove("/UPPITY.BIN");
-            if (Update.end(true))
-            {
-                Serial.println("Update Success: "); Serial.println(readSize);
-                Serial.println("Rebooting...");
-                // preferences.end();
-                ESP.restart();
-            }
-        }
-    }
-
-    SetupEvent::ready();
-    //////////////////////////
-
-    Serial.println("READY");
-
-    // N.B.: Must call pinMode() before begin()
-    sGPIOExpander.pinMode(EPIN_ROTARY_LIMIT, INPUT_PULLUP);
-    sGPIOExpander.pinMode(EPIN_LIGHTKIT_A, OUTPUT);
-    sGPIOExpander.pinMode(EPIN_LIGHTKIT_B, OUTPUT);
-    sGPIOExpander.pinMode(EPIN_LIGHTKIT_C, OUTPUT);
-    sGPIOExpander.pinMode(EPIN_MOTOR_EN, OUTPUT);
-    sGPIOExpander.pinMode(EPIN_MOTOR_ENB, OUTPUT);
-    sGPIOExpander.pinMode(EPIN_LIFTER_TOPLIMIT, INPUT_PULLUP);
-    sGPIOExpander.pinMode(EPIN_LIFTER_BOTLIMIT, INPUT_PULLUP);
-    sGPIOExpander.begin();
-    lifter.disableMotors();
-    scan_i2c();
-}
 
 int atoi(const char* cmd, int numdigits)
 {
@@ -2617,6 +2553,8 @@ bool processLifterCommand(const char* cmd)
     return true;
 }
 
+void setWifiEnabled(bool state);
+
 void processConfigureCommand(const char* cmd)
 {
     if (strcmp(cmd, "#PSC") == 0)
@@ -2625,16 +2563,78 @@ void processConfigureCommand(const char* cmd)
         if (!lifter.calibrate())
             lifter.disableMotors();
     }
-    else if (strcmp(cmd, "#PRC") == 0)
+    else if (startswith(cmd, "#PRC"))
     {
-        sRCMode = !sRCMode;
+        if (*cmd == '0')
+        {
+            sRCMode = false;
+            Serial.println("RC Mode (PPM) disabled.");
+        }
+        else if (*cmd == '1')
+        {
+            sRCMode = true;
+            Serial.println("RC Mode (PPM) enabled.");
+        }
+        else
+        {
+            Serial.println("Invalid");
+        }
+    }
+    else if (startswith(cmd, "#PWIFIRESET"))
+    {
+        lifter.lifterMotorStop();
+        preferences.putString(PREFERENCE_WIFI_SSID, getHostName());
+        preferences.putString(PREFERENCE_WIFI_PASS, WIFI_AP_PASSPHRASE);
+        preferences.putBool(PREFERENCE_WIFI_AP, WIFI_ACCESS_POINT);
+        preferences.putBool(PREFERENCE_WIFI_ENABLED, WIFI_ENABLED);
+        Serial.println("\n\nWifi credenditals reset to default. Restarting ...\n\n\n"); Serial.flush();
+        ESP.restart();
+    }
+    else if (startswith(cmd, "#PWIFI"))
+    {
+        if (*cmd == '0')
+        {
+            if (preferences.getBool(PREFERENCE_WIFI_ENABLED, WIFI_ENABLED))
+            {
+                lifter.lifterMotorStop();
+                preferences.putBool(PREFERENCE_WIFI_ENABLED, false);
+                preferences.end();
+                Serial.println("\n\nWifi disabled. Restarting .... \n\n\n"); Serial.flush();
+                ESP.restart();
+            }
+            else
+            {
+                Serial.println("Already disabled");
+            }
+        }
+        else if (*cmd == '1')
+        {
+            if (!preferences.getBool(PREFERENCE_WIFI_ENABLED, WIFI_ENABLED))
+            {
+                lifter.lifterMotorStop();
+                preferences.putBool(PREFERENCE_WIFI_ENABLED, true);
+                preferences.end();
+                Serial.println("\n\nWifi enabled. Restarting .... \n\n\n"); Serial.flush();
+                ESP.restart();
+            }
+            else
+            {
+                Serial.println("Already enabled");
+            }
+        }
+        else
+        {
+            Serial.println("Invalid");
+        }
     }
     else if (startswith(cmd, "#PZERO"))
     {
         sSettings.clearCommands();
+        Serial.println("Cleared");
     }
     else if (startswith(cmd, "#PL"))
     {
+        Serial.println("Stored Sequences:");
         sSettings.listSortedCommands(Serial);
     }
     else if (startswith(cmd, "#PD"))
@@ -2692,6 +2692,10 @@ void processConfigureCommand(const char* cmd)
                 sSettings.fRotaryLimitSetting = !sSettings.fRotaryLimitSetting;
                 sSettings.write();
             }
+        }
+        else
+        {
+            Serial.println("Invalid");
         }
     }
     else if (startswith(cmd, "#PS"))
@@ -2970,6 +2974,452 @@ bool processCommand(const char* cmd, bool firstCommand)
     return false;
 }
 
+///////////////////////////////////////////////////////
+
+#ifdef USE_WIFI
+WifiAccess wifiAccess;
+#endif
+
+#ifdef USE_WIFI_WEB
+#include "web-images.h"
+
+bool sOTAInProgress;
+int sLifterSpeed = 50;
+int sLifterHeight = 0;
+int sRotationSpeed = 50;
+int sCurrentSeq = 0;
+int sRotatePeriscope = 0;
+
+WMenuData mainMenu[] = {
+    { "Periscope", "/periscope" },
+    { "Setup", "/setup" }
+};
+
+WMenuData setupMenu[] = {
+    { "Home", "/" },
+    { "Calibrate", "/calibrate" },
+    { "Marcduino", "/marcduino" },
+    { "WiFi", "/wifi" },
+    { "Firmware", "/firmware" },
+    { "Back", "/" }
+};
+
+WElement mainContents[] = {
+    WVerticalMenu("menu", mainMenu, SizeOfArray(mainMenu)),
+    rseriesSVG
+};
+
+WElement setupContents[] = {
+    WVerticalMenu("setup", setupMenu, SizeOfArray(setupMenu)),
+    rseriesSVG
+};
+
+String sStoredSeq[] = {
+    "None",
+    "Sequence #0",
+    "Sequence #1",
+    "Sequence #2",
+    "Sequence #3",
+    "Sequence #4",
+    "Sequence #5",
+    "Sequence #6",
+    "Sequence #7",
+    "Sequence #8"
+};
+
+String sLightKitSeq[] = {
+    "Full Cycle",
+    "Off",
+    "Obi Wan",
+    "Yoda",
+    "Sith",
+    "Search Light",
+    "Dagobah",
+    "Sparkle"
+};
+
+WElement periscopeContents[] = {
+    WSelect("Light Kit Sequence", "lightkit",
+        sLightKitSeq, SizeOfArray(sLightKitSeq),
+        []() { return lifter.getLightShow(); },
+        [](int val) {
+            lifter.setLightShow(val);
+        } ),
+    WSelect("Periscope Sequence", "sequence",
+        sStoredSeq, SizeOfArray(sStoredSeq),
+        []() { return sCurrentSeq; },
+        [](int val) {
+            sCurrentSeq = val;
+            if (val != 0)
+            {
+                executeCommand(":PS%d", val-1);
+            }
+        } ),
+    WSlider("Lifter Speed", "lifterspeed", 0, 100,
+        []()->int { return sLifterSpeed; },
+        [](int val) { sLifterSpeed = val; } ),
+    WSlider("Rotation Speed", "rotatespeed", 0, 100,
+        []()->int { return sRotationSpeed; },
+        [](int val) { sRotationSpeed = val; } ),
+    WSlider("Lifter Height", "lifterheight", 0, 100,
+        []()->int { return sLifterHeight; },
+        [](int val) {
+            sLifterHeight = val;
+            executeCommand(":PP%d,%d", val, sLifterSpeed);
+        } ),
+    WSlider("Rotate Periscope", "rotate", 0, 359,
+        []()->int { return sRotatePeriscope; },
+        [](int val) {
+            sRotatePeriscope = val;
+            executeCommand(":PA%d,%d", val, sRotationSpeed);
+        } ),
+
+    WButton("Spin Left", "spinleft", []() {
+        executeCommand(":PR%d", sRotationSpeed);
+    }),
+    WHorizontalAlign(),
+    WButton("Spin Right", "spinright", []() {
+        executeCommand(":PR%d", -sRotationSpeed);
+    }),
+    WHorizontalAlign(),
+    WButton("Random", "random", []() {
+        executeCommand(":PM%d,%d,2,4", sLifterSpeed, sRotationSpeed);
+    }),
+    WHorizontalAlign(),
+    WButton("Down", "down", []() {
+        executeCommand(":PH");
+    }),
+    WVerticalAlign(),
+
+    WButton("Back", "back", "/"),
+    WHorizontalAlign(),
+    WButton("Home", "home", "/"),
+    rseriesSVG
+};
+
+WElement calibrateContents[] = {
+    WButton("Calibrate", "calibrate", []() {
+        executeCommand("#PSC");
+    }),
+    WButton("Back", "back", "/setup"),
+    WHorizontalAlign(),
+    WButton("Home", "home", "/"),
+    WVerticalAlign(),
+    rseriesSVG
+};
+
+String swBaudRates[] = {
+    "2400",
+    "9600",
+};
+
+int marcSerialBaud;
+bool marcWifiEnabled;
+
+WElement marcduinoContents[] = {
+    WSelect("Serial Baud Rate", "serialbaud",
+        swBaudRates, SizeOfArray(swBaudRates),
+        []() { return (marcSerialBaud = (preferences.getInt(PREFERENCE_MARCSERIAL, MARC_SERIAL_BAUD_RATE)) == 2400) ? 0 : 1; },
+        [](int val) { marcSerialBaud = (val == 0) ? 2400 : 9600; } ),
+    WCheckbox("Marcduino on Wifi (port 2000)", "wifienabled",
+        []() { return (marcWifiEnabled = (preferences.getBool(PREFERENCE_MARCWIFI_ENABLED, MARC_WIFI_ENABLED))); },
+        [](bool val) { marcWifiEnabled = val; } ),
+    WButton("Save", "save", []() {
+        preferences.putInt(PREFERENCE_MARCSERIAL, marcSerialBaud);
+        preferences.putBool(PREFERENCE_MARCWIFI_ENABLED, marcWifiEnabled);
+    }),
+    WHorizontalAlign(),
+    WButton("Back", "back", "/setup"),
+    WHorizontalAlign(),
+    WButton("Home", "home", "/"),
+    WVerticalAlign(),
+    rseriesSVG
+};
+
+String wifiSSID;
+String wifiPass;
+bool wifiAP;
+bool wifiEnabled;
+
+WElement wifiContents[] = {
+    W1("WiFi Setup"),
+    WCheckbox("WiFi Enabled", "enabled",
+        []() { return (wifiEnabled = preferences.getBool(PREFERENCE_WIFI_ENABLED, WIFI_ENABLED)); },
+        [](bool val) { wifiEnabled = val; } ),
+    WCheckbox("Access Point", "apmode",
+        []() { return (wifiAP = preferences.getBool(PREFERENCE_WIFI_AP, WIFI_ACCESS_POINT)); },
+        [](bool val) { wifiAP = val; } ),
+    WTextField("WiFi:", "wifi",
+        []()->String { return (wifiSSID = preferences.getString(PREFERENCE_WIFI_SSID, WIFI_AP_NAME)); },
+        [](String val) { wifiSSID = val; } ),
+    WPassword("Password:", "password",
+        []()->String { return (wifiPass = preferences.getString(PREFERENCE_WIFI_PASS, WIFI_AP_PASSPHRASE)); },
+        [](String val) { wifiPass = val; } ),
+    WButton("Save", "save", []() {
+        DEBUG_PRINTLN("WiFi Changed");
+        preferences.putBool(PREFERENCE_WIFI_ENABLED, wifiEnabled);
+        preferences.putBool(PREFERENCE_WIFI_AP, wifiAP);
+        preferences.putString(PREFERENCE_WIFI_SSID, wifiSSID);
+        preferences.putString(PREFERENCE_WIFI_PASS, wifiPass);
+        DEBUG_PRINTLN("Restarting");
+        preferences.end();
+        ESP.restart();
+    }),
+    WHorizontalAlign(),
+    WButton("Back", "back", "/setup"),
+    WHorizontalAlign(),
+    WButton("Home", "home", "/"),
+    WVerticalAlign(),
+    rseriesSVG
+};
+
+WElement firmwareContents[] = {
+    W1("Firmware Setup"),
+    WFirmwareFile("Firmware:", "firmware"),
+    WFirmwareUpload("Reflash", "firmware"),
+    WLabel("Current Firmware Build Date:", "label"),
+    WLabel(__DATE__, "date"),
+    WButton("Clear Prefs", "clear", []() {
+        DEBUG_PRINTLN("Clear all preference settings");
+        preferences.clear();
+    }),
+    WHorizontalAlign(),
+    WButton("Reboot", "reboot", []() {
+        DEBUG_PRINTLN("Rebooting");
+        preferences.end();
+        ESP.restart();
+    }),
+    WHorizontalAlign(),
+    WButton("Back", "back", "/setup"),
+    WHorizontalAlign(),
+    WButton("Home", "home", "/"),
+    WVerticalAlign(),
+    rseriesSVG
+};
+
+WPage pages[] = {
+    WPage("/", mainContents, SizeOfArray(mainContents)),
+      WPage("/periscope", periscopeContents, SizeOfArray(periscopeContents)),
+    WPage("/setup", setupContents, SizeOfArray(setupContents)),
+      WPage("/calibrate", calibrateContents, SizeOfArray(calibrateContents)),
+      WPage("/marcduino", marcduinoContents, SizeOfArray(marcduinoContents)),
+      WPage("/wifi", wifiContents, SizeOfArray(wifiContents)),
+      WPage("/firmware", firmwareContents, SizeOfArray(firmwareContents)),
+        WUpload("/upload/firmware",
+            [](Client& client)
+            {
+                if (Update.hasError())
+                    client.println("HTTP/1.0 200 FAIL");
+                else
+                    client.println("HTTP/1.0 200 OK");
+                client.println("Content-type:text/html");
+                client.println("Vary: Accept-Encoding");
+                client.println();
+                client.println();
+                client.stop();
+                if (!Update.hasError())
+                {
+                    delay(1000);
+                    preferences.end();
+                    ESP.restart();
+                }
+                sOTAInProgress = false;
+            },
+            [](WUploader& upload)
+            {
+                if (upload.status == UPLOAD_FILE_START)
+                {
+                    sOTAInProgress = true;
+                    unmountFileSystems();
+                    Serial.printf("Update: %s\n", upload.filename.c_str());
+                    if (!Update.begin(upload.fileSize))
+                    {
+                        //start with max available size
+                        Update.printError(Serial);
+                    }
+                }
+                else if (upload.status == UPLOAD_FILE_WRITE)
+                {
+                    float range = (float)upload.receivedSize / (float)upload.fileSize;
+                    DEBUG_PRINTLN("Received: "+String(range*100)+"%");
+                   /* flashing firmware to ESP*/
+                    if (Update.write(upload.buf, upload.currentSize) != upload.currentSize)
+                    {
+                        Update.printError(Serial);
+                    }
+                }
+                else if (upload.status == UPLOAD_FILE_END)
+                {
+                    DEBUG_PRINTLN("GAME OVER");
+                    if (Update.end(true))
+                    {
+                        //true to set the size to the current progress
+                        Serial.printf("Update Success: %u\nRebooting...\n", upload.receivedSize);
+                    }
+                    else
+                    {
+                        Update.printError(Serial);
+                    }
+                }
+            })
+};
+WifiWebServer<10,SizeOfArray(pages)> webServer(pages, wifiAccess);
+TaskHandle_t sEventTask;
+#endif
+
+#ifdef USE_WIFI_MARCDUINO
+WifiMarcduinoReceiver wifiMarcduinoReceiver(wifiAccess);
+#endif
+
+String getHostName()
+{
+    String mac = wifiAccess.getMacAddress();
+    String hostName = mac.substring(mac.length()-5, mac.length());
+    hostName.remove(2, 1);
+    hostName = WIFI_AP_NAME+String("-")+hostName;
+    return hostName;
+}
+
+///////////////////////////////////////////////////////
+
+void setup()
+{
+    REELTWO_READY();
+
+    if (!preferences.begin("uppityspinner", false))
+    {
+        DEBUG_PRINTLN("Failed to init prefs");
+    }
+
+#ifdef USE_WIFI_WEB
+    wifiAccess.setNetworkCredentials(
+        preferences.getString(PREFERENCE_WIFI_SSID, getHostName()),
+        preferences.getString(PREFERENCE_WIFI_PASS, WIFI_AP_PASSPHRASE),
+        preferences.getBool(PREFERENCE_WIFI_AP, WIFI_ACCESS_POINT),
+        preferences.getBool(PREFERENCE_WIFI_ENABLED, WIFI_ENABLED));
+#endif
+
+    Wire.begin();
+    SetupEvent::ready();
+
+    lifter.disableMotors();
+    Serial.println("READY");
+
+#ifdef USE_WIFI_WEB
+    wifiAccess.notifyWifiConnected([](WifiAccess &wifi) {
+    #ifdef PIN_STATUSLED
+        statusLED.setMode(kWifiMode);
+    #endif
+        Serial.print("Connect to http://"); Serial.println(wifi.getIPAddress());
+    #ifdef USE_MDNS
+        // No point in setting up mDNS if R2 is the access point
+        if (!wifi.isSoftAP())
+        {
+            if (webServer.enabled())
+            {
+                String hostName = getHostName();
+                Serial.print("Host name: "); Serial.println(hostName);
+                if (!MDNS.begin(hostName.c_str()))
+                {
+                    DEBUG_PRINTLN("Error setting up MDNS responder!");
+                }
+            }
+        }
+    #endif
+    });
+#endif
+
+#ifdef USE_OTA
+    ArduinoOTA.onStart([]()
+    {
+        String type;
+        if (ArduinoOTA.getCommand() == U_FLASH)
+        {
+            type = "sketch";
+        }
+        else // U_SPIFFS
+        {
+            type = "filesystem";
+        }
+        DEBUG_PRINTLN("OTA START");
+        // Kill the motors
+        lifter.lifterMotorStop();
+    })
+    .onEnd([]()
+    {
+        DEBUG_PRINTLN("OTA END");
+    })
+    .onProgress([](unsigned int progress, unsigned int total)
+    {
+        float range = (float)progress / (float)total;
+    })
+    .onError([](ota_error_t error)
+    {
+        String desc;
+        if (error == OTA_AUTH_ERROR) desc = "Auth Failed";
+        else if (error == OTA_BEGIN_ERROR) desc = "Begin Failed";
+        else if (error == OTA_CONNECT_ERROR) desc = "Connect Failed";
+        else if (error == OTA_RECEIVE_ERROR) desc = "Receive Failed";
+        else if (error == OTA_END_ERROR) desc = "End Failed";
+        else desc = "Error: "+String(error);
+        DEBUG_PRINTLN(desc);
+    });
+#endif
+
+#ifdef USE_WIFI_MARCDUINO
+    wifiMarcduinoReceiver.setEnabled(preferences.getBool(PREFERENCE_MARCWIFI_ENABLED, MARC_WIFI_ENABLED));
+    if (wifiMarcduinoReceiver.enabled())
+    {
+        wifiMarcduinoReceiver.setCommandHandler([](const char* cmd) {
+            Marcduino::processCommand(player, cmd);
+            if (preferences.getBool(PREFERENCE_MARCWIFI_SERIAL_PASS, MARC_WIFI_SERIAL_PASS) &&
+                preferences.getBool(PREFERENCE_MARCSERIAL_ENABLED, MARC_SERIAL_ENABLED) &&
+                preferences.getBool(PREFERENCE_MARCSERIAL_PASS, MARC_SERIAL_PASS))
+            {
+                executeCommand(cmd);
+            }
+        });
+    }
+#endif
+
+#ifdef USE_WIFI_WEB
+    // For safety we will stop the motors if the web client is connected
+    webServer.setConnect([]() {
+        // Callback for each connected web client
+        // DEBUG_PRINTLN("Hello");
+    });
+#endif
+    xTaskCreatePinnedToCore(
+          eventLoopTask,
+          "Events",
+          5000,    // shrink stack size?
+          NULL,
+          1,
+          &sEventTask,
+          0);
+}
+
+void eventLoop()
+{
+#ifdef USE_OTA
+    ArduinoOTA.handle();
+#endif
+#ifdef USE_WIFI_WEB
+    webServer.handle();
+#endif
+}
+
+void eventLoopTask(void* arg)
+{
+    for (;;)
+    {
+        eventLoop();
+        vTaskDelay(1);
+    }
+}
+
+///////////////////////////////////////////////////////
+
 void loop()
 {
     AnimatedEvent::process();
@@ -3093,8 +3543,7 @@ void loop()
             static int sLastRCHeight;
             if (height >= 0 && height <= 100 && abs(height - sLastRCHeight) > 10)
             {
-                snprintf(sBuffer, sizeof(sBuffer), ":PP%d,%d", height, 50);
-                runSerialCommand();
+                executeCommand(":PP%d,%d", height, 50);
                 printf("NEW HEIGHT : %d\n", height);
                 sLastRCHeight = height;
             }
