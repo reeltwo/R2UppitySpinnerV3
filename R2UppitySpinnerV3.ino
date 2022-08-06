@@ -159,7 +159,7 @@
 #include "ReelTwo.h"
 #include "core/SetupEvent.h"
 #include "core/AnimatedEvent.h"
-#include "analogWrite.h"
+#include "core/AnalogWrite.h"
 #include "encoder/PPMReader.h"
 #include "Wire.h"
 #ifdef USE_WIFI
@@ -1233,9 +1233,6 @@ public:
             distance.setOutputLimits(-350, 350);
 
             DEBUG_PRINTLN("SEEK TO BOTTOM PID");
-        #ifdef USE_DEBUG
-            uint32_t start = millis();
-        #endif
             bool botLimit;
             LifterStatus lifterStatus;
             for (;;)
@@ -1258,9 +1255,6 @@ public:
                 }
             }
             lifterMotorStop();
-        #ifdef USE_DEBUG
-            uint32_t stop = millis();
-        #endif
             if (botLimit)
             {
                 DEBUG_PRINTLN("BOTTOM LIMIT REACHED");
@@ -1351,9 +1345,6 @@ public:
                                 // DEBUG_PRINTLN("ROTARY NO LONGER HOME");
                                 rotaryWasHome = false;
                             }
-                        #ifdef USE_DEBUG
-                            long encoder_ticks = getRotaryPosition();
-                        #endif
                             if (!rotaryStatus.isMoving())
                             {
                                 break;
@@ -1481,9 +1472,6 @@ public:
                 TargetSteering steering(targetDistance);
                 steering.setDistanceOutputLimits(outputLimit);
                 steering.setSampleTime(1);
-            #ifdef USE_DEBUG
-                uint32_t start = millis();
-            #endif
                 bool topLimit;
                 long start_ticks = getLifterPosition();
                 DEBUG_PRINT("OUTPUT LIMIT: "); DEBUG_PRINTLN(outputLimit);
@@ -1514,26 +1502,8 @@ public:
                     DEBUG_PRINTLN(" SPEED TOO LOW");
                     break;
                 }
-            #ifdef USE_DEBUG
-                uint32_t stop = millis();
-            #endif
                 if (topLimit)
                 {
-                #if 0//def USE_DEBUG
-                    DEBUG_PRINT("TOP LIMIT REACHED - ");
-                    DEBUG_PRINT(topSpeed);
-                    DEBUG_PRINT(" ");
-                    DEBUG_PRINTLN(outputLimit);
-
-                    long encoder_ticks = getLifterPosition();
-                    DEBUG_PRINT("  DISTANCE: ");
-                    DEBUG_PRINT(encoder_ticks);
-                    DEBUG_PRINT(" MAX DISTANCE: ");
-                    DEBUG_PRINTLN(maxEncoderVal);
-                    DEBUG_PRINT("TIME: ");
-                    DEBUG_PRINT(stop - start);
-                    DEBUG_PRINTLN();
-                #endif
                     size_t index = topSpeed/5;
                     sSettings.fUpLimits[index].valid = true;
                     sSettings.fUpLimits[index].outputLimit = outputLimit;
@@ -1605,9 +1575,6 @@ public:
                 TargetSteering steering(homePosition);
                 steering.setDistanceOutputLimits(outputLimit);
                 steering.setSampleTime(1);
-            #ifdef USE_DEBUG
-                uint32_t start = millis();
-            #endif
                 bool botLimit;
                 long start_ticks = getLifterPosition();
                 LifterStatus lifterStatus;
@@ -1627,31 +1594,9 @@ public:
                     success = false;
                     break;
                 }
-            #ifdef USE_DEBUG
-                uint32_t stop = millis();
-            #endif
                 if (botLimit)
                 {
-                    // DEBUG_PRINT("BOT LIMIT REACHED - ");
-                    // DEBUG_PRINT(topSpeed);
-                    // DEBUG_PRINT(" ");
-                    // DEBUG_PRINTLN(outputLimit);
-
-                    // long encoder_ticks = getLifterPosition();
-                    // DEBUG_PRINT("  DISTANCE: ");
-                    // DEBUG_PRINT(encoder_ticks);
-                    // DEBUG_PRINT(" MAX DISTANCE: ");
-                    // DEBUG_PRINTLN(minEncoderVal);
-                    // DEBUG_PRINT("TIME: ");
-                    // DEBUG_PRINT(stop - start);
-                    // if (encoder_ticks > minEncoderVal)
-                    // {
-                    //     DEBUG_PRINT(" BOUNCE: ");
-                    //     DEBUG_PRINT(encoder_ticks - minEncoderVal);
-                    // }
-                    // DEBUG_PRINTLN();
                     size_t index = topSpeed/5;
-                    // DEBUG_PRINT("index: "); DEBUG_PRINTLN(index);
                     sSettings.fDownLimits[index].valid = true;
                     sSettings.fDownLimits[index].outputLimit = outputLimit;
                     break;
@@ -1659,13 +1604,9 @@ public:
                 else
                 {
                     long encoder_ticks = getLifterPosition();
-                    // DEBUG_PRINT(encoder_ticks);
-                    // DEBUG_PRINT(" LIMIT NOT REACHED - RETRYING ");
-                    // DEBUG_PRINT(targetDistance - encoder_ticks);
                     outputLimit -= max(encoder_ticks*2, 1L);
                     if (outputLimit < 0)
                         outputLimit = 0;
-                    // DEBUG_PRINT(" NEW LIMIT : "); DEBUG_PRINTLN(outputLimit);
                 }
                 delay(2000);
                 if (serialAbort())
@@ -1937,9 +1878,6 @@ public:
         if (!getUpOutputLimit(speed, limit))
             return false;
         steering.setDistanceOutputLimits(limit);
-    #ifdef USE_DEBUG
-        uint32_t start = millis();
-    #endif
         bool topLimit;
         LifterStatus lifterStatus;
         for (;;)
@@ -1958,9 +1896,6 @@ public:
             }
         }
         lifterMotorStop();
-    #ifdef USE_DEBUG
-        uint32_t stop = millis();
-    #endif
         if (topLimit)
         {
             DEBUG_PRINTLN("TOP LIMIT REACHED");
@@ -2674,12 +2609,12 @@ void processConfigureCommand(const char* cmd)
     }
     else if (startswith(cmd, "#PR"))
     {
+        lifter.lifterMotorStop();
         sSettings.fDisableRotary = !sSettings.fDisableRotary;
         sSettings.write();
         Serial.println(sSettings.fDisableRotary ? "Disabled" : "Enabled");
-        void (*resetArduino)() = NULL;
         Serial.flush(); delay(1000);
-        resetArduino();
+        ESP.restart();
     }
     else if (startswith(cmd, "#PN"))
     {
@@ -3255,7 +3190,7 @@ WPage pages[] = {
                 }
                 else if (upload.status == UPLOAD_FILE_WRITE)
                 {
-                    float range = (float)upload.receivedSize / (float)upload.fileSize;
+                    // float range = (float)upload.receivedSize / (float)upload.fileSize;
                     DEBUG_PRINTLN("Received: "+String(range*100)+"%");
                    /* flashing firmware to ESP*/
                     if (Update.write(upload.buf, upload.currentSize) != upload.currentSize)
@@ -3366,7 +3301,7 @@ void setup()
     })
     .onProgress([](unsigned int progress, unsigned int total)
     {
-        float range = (float)progress / (float)total;
+        // float range = (float)progress / (float)total;
     })
     .onError([](ota_error_t error)
     {
