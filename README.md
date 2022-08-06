@@ -1,6 +1,6 @@
 # R2 Uppity Spinner
 
-This is the sketch for the R2 Uppity Spinner V2 (using TB9051FTG). It depends on the Reeltwo library. You can download the latest release of the Reeltwo library here: https://github.com/reeltwo/Reeltwo/releases
+This is the sketch for the R2 Uppity Spinner V2 (using TB9051FTG).
 
 [![Uppity Spinner](https://i.vimeocdn.com/video/1153816619-6fef8819cf32b562e0519537a46baed562bb51651010442a9ccdd9909c40952e-d_640x360)](https://vimeo.com/558277516)
 
@@ -9,6 +9,14 @@ Default baud rate is 9600 baud and the default I2C address is 32 (0x20). Both ca
 After installing your board you should run the `#PSC` calibration command.
 
 If you want a snappy hyper caffinated periscope you should use a 6V lifter motor. If you want a slower more deliberate periscope you should use a 12V lifter motor.
+
+## Libraries Used
+
+<ul>
+<li>https://github.com/reeltwo/Reeltwo</li>
+<li>https://github.com/adafruit/Adafruit_NeoPixel</li>
+<li>https://github.com/xreef/PCF8574_library</li>
+</ul>
 
 # Assembling R2 Uppity Spinner PCB Part 1
 [![Part1](https://img.youtube.com/vi/x4_3irdV4C8/hqdefault.jpg)](https://www.youtube.com/watch?v=x4_3irdV4C8)
