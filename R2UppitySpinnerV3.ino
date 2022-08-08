@@ -1233,6 +1233,9 @@ public:
             distance.setOutputLimits(-350, 350);
 
             DEBUG_PRINTLN("SEEK TO BOTTOM PID");
+        #ifdef USE_DEBUG
+            uint32_t start = millis();
+        #endif
             bool botLimit;
             LifterStatus lifterStatus;
             for (;;)
@@ -1255,6 +1258,9 @@ public:
                 }
             }
             lifterMotorStop();
+        #ifdef USE_DEBUG
+            uint32_t stop = millis();
+        #endif
             if (botLimit)
             {
                 DEBUG_PRINTLN("BOTTOM LIMIT REACHED");
@@ -1878,6 +1884,9 @@ public:
         if (!getUpOutputLimit(speed, limit))
             return false;
         steering.setDistanceOutputLimits(limit);
+    #ifdef USE_DEBUG
+        uint32_t start = millis();
+    #endif
         bool topLimit;
         LifterStatus lifterStatus;
         for (;;)
@@ -1896,6 +1905,9 @@ public:
             }
         }
         lifterMotorStop();
+    #ifdef USE_DEBUG
+        uint32_t stop = millis();
+    #endif
         if (topLimit)
         {
             DEBUG_PRINTLN("TOP LIMIT REACHED");
@@ -3190,9 +3202,11 @@ WPage pages[] = {
                 }
                 else if (upload.status == UPLOAD_FILE_WRITE)
                 {
-                    // float range = (float)upload.receivedSize / (float)upload.fileSize;
+                #ifdef USE_DEBUG
+                    float range = (float)upload.receivedSize / (float)upload.fileSize;
                     DEBUG_PRINTLN("Received: "+String(range*100)+"%");
-                   /* flashing firmware to ESP*/
+                #endif
+                    /* flashing firmware to ESP*/
                     if (Update.write(upload.buf, upload.currentSize) != upload.currentSize)
                     {
                         Update.printError(Serial);
