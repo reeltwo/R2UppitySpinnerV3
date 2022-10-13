@@ -10,14 +10,19 @@
 #define BUILD_VERSION "custom"
 #endif
 
+#if __has_include("reeltwo_build_version.h")
+#include "reeltwo_build_version.h"
+#endif
+
 ///////////////////////////////////
 
 #define USE_DEBUG
 //#define USE_LEDLIB 0
-#define USE_WIFI
-#define USE_WIFI_WEB
-#define USE_MDNS
-#define USE_OTA
+#define USE_DROID_REMOTE              // Define for droid remote support
+#define USE_WIFI                      // Define to WiFi Support
+#define USE_WIFI_WEB                  // Define for configuration website
+#define USE_MDNS                      // Define for mDNS support
+#define USE_OTA                       // Define for OTA support
 
 // #define DISABLE_ROTARY
 
@@ -25,18 +30,24 @@
 // CONFIGURABLE OPTIONS
 ///////////////////////////////////
 
-// Replace with your network credentials
-#ifdef USE_WIFI
-#define WIFI_ENABLED         true
-// Set these to your desired credentials.
-#define WIFI_AP_NAME         "R2Uppity"
-#define WIFI_AP_PASSPHRASE   "Astromech"
-#define WIFI_ACCESS_POINT    true  /* true if access point: false if joining existing wifi */
+#ifdef USE_DROID_REMOTE
+#define REMOTE_ENABLED                      true
+#define SMQ_HOSTNAME                        "R2Uppity"
+#define SMQ_SECRET                          "Astromech"
 #endif
 
-#define MARC_SERIAL_BAUD_RATE           9600
-#define MARC_SERIAL_ENABLED             true
-#define MARC_WIFI_ENABLED               false
+// Replace with your network credentials
+#ifdef USE_WIFI
+#define WIFI_ENABLED                        true
+// Set these to your desired credentials.
+#define WIFI_AP_NAME                        "R2Uppity"
+#define WIFI_AP_PASSPHRASE                  "Astromech"
+#define WIFI_ACCESS_POINT                   true  /* true if access point: false if joining existing wifi */
+#endif
+
+#define MARC_SERIAL_BAUD_RATE               9600
+#define MARC_SERIAL_ENABLED                 true
+#define MARC_WIFI_ENABLED                   false
 
 ///////////////////////////////////
 
@@ -58,28 +69,25 @@
 ///////////////////////////////////
 
 // IA-Parts lifter defaults
-#define LIFTER_MINIMUM_POWER        30      // 40 out of 100. Don't bother with lower values. Won't lift reliably
-#define LIFTER_SEEKBOTTTOM_POWER    30      // 30 out of 100. Lower than LIFTER_MINIMUM_POWER because we are going down
-#define ROTARY_MINIMUM_POWER        20      // 20 out of 100. Don't bother with lower values. Won't rotate reliably
-#define LIFTER_DISTANCE             845     // default value - lifter will calibrate
+#define LIFTER_MINIMUM_POWER                30      // 30 out of 100. Don't bother with lower values. Won't lift reliably
+#define LIFTER_SEEKBOTTTOM_POWER            30      // 30 out of 100. Lower than LIFTER_MINIMUM_POWER because we are going down
+#define ROTARY_MINIMUM_POWER                20      // 20 out of 100. Don't bother with lower values. Won't rotate reliably
+#define LIFTER_DISTANCE                     845     // default value - lifter will calibrate
 
 // Greg Hulette’s Periscope Lifter
-//#define LIFTER_MINIMUM_POWER        65      // 65 out of 100. Don't bother with lower values. Won't lift reliably
-//#define LIFTER_SEEKBOTTTOM_POWER    40      // 40 out of 100. Lower than LIFTER_MINIMUM_POWER because we are going down
-//#define ROTARY_MINIMUM_POWER        40      // 40 out of 100. Don't bother with lower values. Won't rotate reliably
-//#define LIFTER_DISTANCE             1200     // default value 1200 - lifter will calibrate
+//#define LIFTER_MINIMUM_POWER              65      // 65 out of 100. Don't bother with lower values. Won't lift reliably
+//#define LIFTER_SEEKBOTTTOM_POWER          40      // 40 out of 100. Lower than LIFTER_MINIMUM_POWER because we are going down
+//#define ROTARY_MINIMUM_POWER              40      // 40 out of 100. Don't bother with lower values. Won't rotate reliably
+//#define LIFTER_DISTANCE                   1200     // default value 1200 - lifter will calibrate
 
-#define ROTARY_MINIMUM_HEIGHT       LIFTER_DISTANCE/2
-#define MOTOR_TIMEOUT               2000
-#define OUTPUT_LIMIT_PRESCALE       3.1
-#define DISTANCE_OUTPUT_SCALE       3
-#define MAX_COMMANDS                100
+#define ROTARY_MINIMUM_HEIGHT               LIFTER_DISTANCE/2
 
-#define EEPROM_MAGIC                0xba5eba11
-#define EEPROM_CMD_MAGIC            0xf005ba11
-#define EEPROM_END_TAG              0xff
+#define MOTOR_TIMEOUT                       2000
+#define OUTPUT_LIMIT_PRESCALE               3.1
+#define DISTANCE_OUTPUT_SCALE               3
+#define MAX_COMMANDS                        100
 
-#define COMMAND_SERIAL              Serial2
+#define COMMAND_SERIAL                      Serial2
 
 ///////////////////////////////////
 // This option is for builders working on their own custom lifters.
@@ -93,54 +101,7 @@
 #define DISABLE_SAFETY_MANEUVER
 #endif
 
-///////////////////////////////////
-// --- Lifter mechanism
-
-#define PIN_LIFTER_ENCODER_A   34
-#define PIN_LIFTER_ENCODER_B   35
-
-/* Lifter Motor */
-#define PIN_LIFTER_PWM1        32
-#define PIN_LIFTER_PWM2        33
-#define PIN_LIFTER_DIAG        36
-
-#define PIN_LIFTER_TOPLIMIT    18
-#define PIN_LIFTER_BOTLIMIT    19
-
-///////////////////////////////////
-// --- Rotary mechanism
-
-#define PIN_ROTARY_ENCODER_A   27
-#define PIN_ROTARY_ENCODER_B   13
-
-/* Rotary Motor */
-#define PIN_ROTARY_PWM1        25
-#define PIN_ROTARY_PWM2        26
-#define PIN_ROTARY_DIAG        39
-
-#define PIN_ROTARY_LIMIT       23
-
-///////////////////////////////////
-
-#define PIN_STATUSLED          5
-#define PIN_PPMIN_RC           14
-#define PIN_RXD2               16
-#define PIN_TXD2               0 /* not used */
-
-///////////////////////////////////
-
-#define PIN_GPIO_INTERRUPT     17
-#define USE_I2C_GPIO_EXPANDER
-#define GPIO_PIN_BASE           200
-
-#define PIN_INPUT_A             GPIO_PIN_BASE+0   /* INPUT A */
-#define PIN_LIGHTKIT_A          GPIO_PIN_BASE+1
-#define PIN_LIGHTKIT_B          GPIO_PIN_BASE+2
-#define PIN_LIGHTKIT_C          GPIO_PIN_BASE+3
-#define PIN_MOTOR_EN            GPIO_PIN_BASE+4
-#define PIN_MOTOR_ENB           GPIO_PIN_BASE+5
-#define PIN_INPUT_B             GPIO_PIN_BASE+6   /* INPUT B */
-#define PIN_INPUT_C             GPIO_PIN_BASE+7   /* INPUT B */
+#include "pin-map.h"
 
 //////////////////////////////
 // LIGHT KIT TRI-STATE
@@ -162,6 +123,9 @@
 // GND GND GND     (Switch Position 7): Sparkle: All White LED’s randomly Flash
 ///////////////////////////////////
 
+#define PREFERENCE_REMOTE_ENABLED       "remote"
+#define PREFERENCE_REMOTE_HOSTNAME      "rhost"
+#define PREFERENCE_REMOTE_SECRET        "rsecret"
 #define PREFERENCE_WIFI_ENABLED         "wifi"
 #define PREFERENCE_WIFI_SSID            "ssid"
 #define PREFERENCE_WIFI_PASS            "pass"
@@ -172,7 +136,11 @@
 
 ///////////////////////////////////
 
+#ifdef USE_DROID_REMOTE
+#include "ReelTwoSMQ32.h"
+#else
 #include "ReelTwo.h"
+#endif
 #include "core/SetupEvent.h"
 #include "core/AnimatedEvent.h"
 #include "core/AnalogWrite.h"
@@ -190,6 +158,10 @@
 #endif
 #include <Preferences.h>
 
+#ifdef USE_DROID_REMOTE
+#define USE_MENUS
+#endif
+
 Preferences preferences;
 
 ///////////////////////////////////
@@ -202,11 +174,15 @@ Preferences preferences;
 #define GPIO_EXPANDER_ADDRESS 0x20
 #endif
 
+static void IRAM_ATTR flagDigitalReadAll();
+
 class CustomPinManager : public PinManager
 {
 public:
+    typedef PCF8574::DigitalInput DigitalInput;
+
     CustomPinManager(byte i2cAddress = GPIO_EXPANDER_ADDRESS) :
-        fGPIOExpander(i2cAddress)
+        fGPIOExpander(i2cAddress, PIN_GPIO_INTERRUPT, flagDigitalReadAll)
     {}
 
     virtual bool digitalRead(uint8_t pin) override
@@ -240,10 +216,27 @@ public:
         }
     }
 
+    virtual void begin() override
+    {
+        fGPIOExpander.begin();
+    }
+
+    DigitalInput digitalReadAll()
+    {
+        return fGPIOExpander.digitalReadAll();
+    }
+
 protected:
     PCF8574 fGPIOExpander;
 };
 CustomPinManager sPinManager;
+
+static volatile bool sDigitalReadAll;
+static void IRAM_ATTR flagDigitalReadAll()
+{
+    sDigitalReadAll = true;
+}
+
 #else
 PinManager sPinManager;
 #endif
@@ -253,18 +246,26 @@ PinManager sPinManager;
 #ifdef PIN_STATUSLED
 #include "core/SingleStatusLED.h"
 enum {
-    kNormalMode = 0,
-    kWifiMode = 1,
-    kStopMode = 2,
-    kSafetyMode = 3,
-    kMovingMode = 4
+    kNormalModeHome = 0,
+    kWifiModeHome = 1,
+    kNormalModeAway = 2,
+    kWifiModeAway = 3,
+    kNormalModeMoving = 4,
+    kWifiModeMoving = 5,
+    kSafetyMode = 6,
 };
+unsigned sCurrentMode = kNormalModeHome;
 static constexpr uint8_t kStatusColors[][4][3] = {
-      { {  0,   2,    0} , {   0,    2,    0} , {  0,   2,    0} , {   0,    2,    0}  },  // normal (all green)
-      { {  0,   0,    2} , {   0,    0,    2} , {  0,   0,    2} , {   0,    0,    2}  },  // wifi enabled (all blue)
-      { {  2,   0,    0} , {   2,    0,    0} , {  2,   0,    0} , {   2,    0,    0}  },  // all red
-      { {  0,   2,    2} , {   0,    2,    2} , {  0,   2,    2} , {   0,    2,    2}  },  // all yellow
-      { {  0,   0,   10} , {  10,    0,    0} , {  0,   0,   10} , {  10,    0,    0}  }  // blue,green,blue,green
+      { {  0,   2,    0} , {   0,    2,    0} , {  0,   2,    0} , {   0,    2,    0}  },  // normal mode home (all green)
+      { {  0,   0,    2} , {   0,    0,    2} , {  0,   0,    2} , {   0,    0,    2}  },  // wifi mode home (all blue)
+
+      { {  2,   0,    0} , {   2,    0,    0} , {  2,   0,    0} , {   2,    0,    0}  },  // normal mode away (all red)
+      { {  0,   0,    2} , {   2,    0,    0} , {  0,   0,    2} , {   2,    0,    0}  },  // wifi mode away (blue,red,blue,red)
+
+      { {  0,   2,    0} , {   2,    2,    0} , {  0,   2,    0} , {   2,    2,    0}  },  // normal mode moving (reen,yellow,green,yellow)
+      { {  0,   0,    2} , {   2,    2,    0} , {  0,   0,    2} , {   2,    2,    0}  },  // wifi mode moving (blue,yellow,blue,yellow)
+
+      { {  2,   2,    0} , {   2,    2,    0} , {  2,   2,    0} , {   2,    2,    0}  }   // all yellow
 };
 typedef SingleStatusLED<PIN_STATUSLED> StatusLED;
 StatusLED statusLED(kStatusColors, SizeOfArray(kStatusColors));
@@ -292,7 +293,7 @@ struct LifterSettings
 {
     OutputLimit fUpLimits[100/5+1];
     OutputLimit fDownLimits[sizeof(fUpLimits)/sizeof(fUpLimits[0])];
-    unsigned fMinimumPower;
+    unsigned fMinimumPower = LIFTER_MINIMUM_POWER;
     unsigned fLifterDistance = LIFTER_DISTANCE;
     union
     {
@@ -330,6 +331,7 @@ static char sBuffer[CONSOLE_BUFFER_SIZE];
 static bool sCmdNextCommand;
 static char sCmdBuffer[COMMAND_BUFFER_SIZE];
 static bool sRCMode;
+static bool sVerboseDebug;
 
 static void runSerialCommand()
 {
@@ -358,19 +360,24 @@ static void executeCommand(const char* cmd, ...)
 
 ///////////////////////////////////
 
-static volatile bool sDigitalReadAll;
-
-static void IRAM_ATTR flagDigitalReadAll()
-{
-    sDigitalReadAll = true;
-}
-
-PCF8574 sGPIOExpander(0x20, PIN_GPIO_INTERRUPT, flagDigitalReadAll);
 PPMReader sPPM(PIN_PPMIN_RC, 6);
 
 void unmountFileSystems()
 {
 
+}
+
+void reboot()
+{
+    Serial.println(F("Restarting..."));
+#ifdef USE_DROID_REMOTE
+    DisconnectRemote();
+#endif
+    if (sRCMode)
+        sPPM.end();
+    unmountFileSystems();
+    preferences.end();
+    ESP.restart();
 }
 
 ///////////////////////////////////
@@ -389,81 +396,6 @@ public:
         kLightKit_Dagobah = 6,
         kLightKit_Sparkle = 7
     };
-
-    static void println()
-    {
-        Serial.println();
-    }
-
-    static void print(char num)
-    {
-        Serial.print(num);
-    }
-
-    static void print(int num)
-    {
-        Serial.print(num);
-    }
-
-    static void print(long num)
-    {
-        Serial.print(num);
-    }
-
-    static void print(unsigned int num)
-    {
-        Serial.print(num);
-    }
-
-    static void print(float num)
-    {
-        Serial.print(num);
-    }
-
-    static void print(const char* str)
-    {
-        Serial.print(str);
-    }
-
-    static void print(const __FlashStringHelper* str)
-    {
-        Serial.print(str);
-    }
-
-    static void println(char num)
-    {
-        Serial.println(num);
-    }
-
-    static void println(int num)
-    {
-        Serial.println(num);
-    }
-
-    static void println(long num)
-    {
-        Serial.println(num);
-    }
-
-    static void println(unsigned int num)
-    {
-        Serial.println(num);
-    }
-
-    static void println(float num)
-    {
-        Serial.println(num);
-    }
-
-    static void println(const char* str)
-    {
-        Serial.println(str);
-    }
-
-    static void println(const __FlashStringHelper* str)
-    {
-        Serial.println(str);
-    }
 
     ///////////////////////////////////
     // Read limit switches
@@ -550,7 +482,6 @@ public:
         sPinManager.digitalWrite(PIN_MOTOR_ENB, HIGH);
 
         fMotorsEnabled = false;
-        statusLED.setMode(kStopMode);
     }
 
     static void enableMotors()
@@ -560,7 +491,9 @@ public:
 
         fMotorsEnabled = true;
         fMotorsEnabledTime = millis();
-        statusLED.setMode(kMovingMode);
+    #ifdef PIN_STATUSLED
+        statusLED.setMode(sSafetyManeuver ? sCurrentMode + kNormalModeMoving : unsigned(kSafetyMode));
+    #endif
     }
 
     static inline void dualAnalogWrite(uint8_t m1, float v1, uint8_t m2, float v2)
@@ -603,7 +536,6 @@ public:
         enableMotors();
         dualAnalogWrite(PIN_LIFTER_PWM1, 0, PIN_LIFTER_PWM2, 0);
         fLifterThrottle = 0;
-        statusLED.setMode(kStopMode);
     }
 
     ///////////////////////////////////
@@ -742,7 +674,10 @@ public:
                         scale = ROTARY_THROTTLE_DECELERATION_SCALE;
                     float val = max(abs(fRotarySpeed - fRotaryThrottle) / scale, 0.01f);
                     throttle = ((int)round(min(fRotaryThrottle + val, fRotarySpeed)*100))/100.0f;
-                    DEBUG_PRINTLN(throttle);
+                    if (sVerboseDebug)
+                    {
+                        DEBUG_PRINTLN(throttle);
+                    }
                     rotaryMotorMove(throttle);
                     fRotaryThrottle = throttle;
                 }
@@ -753,7 +688,10 @@ public:
                         scale = ROTARY_THROTTLE_DECELERATION_SCALE;
                     float val = abs(fRotarySpeed - fRotaryThrottle) / scale;
                     throttle = ((int)floor(max(fRotaryThrottle - val, fRotarySpeed)*100))/100.0f;
-                    DEBUG_PRINTLN(throttle);
+                    if (sVerboseDebug)
+                    {
+                        DEBUG_PRINTLN(throttle);
+                    }
                     rotaryMotorMove(throttle);
                     fRotaryThrottle = throttle;
                 }
@@ -851,19 +789,31 @@ public:
     #ifndef DISABLE_ROTARY
         if (sSettings.fDisableRotary)
             return true;
-        DEBUG_PRINT("MOVE raw="); DEBUG_PRINT(getRotaryPosition());
-        DEBUG_PRINT(" pos="); DEBUG_PRINT(pos);
-        DEBUG_PRINT(" target="); DEBUG_PRINT(target);
+        if (sVerboseDebug)
+        {
+            DEBUG_PRINT("MOVE raw="); DEBUG_PRINT(getRotaryPosition());
+            DEBUG_PRINT(" pos="); DEBUG_PRINT(pos);
+            DEBUG_PRINT(" target="); DEBUG_PRINT(target);
+        }
         if (!withinArc(target - fudge, target + fudge, pos))
         {
             int dist = shortestDistance(pos, target);
-            DEBUG_PRINT(" dist="); DEBUG_PRINT(dist);
+            if (sVerboseDebug)
+            {
+                DEBUG_PRINT(" dist="); DEBUG_PRINT(dist);
+            }
             if (maxspeed > speed && abs(dist) > fudge*2)
                 speed += (maxspeed - speed) * float(abs(dist)) / 180;
-            DEBUG_PRINT(" speed1="); DEBUG_PRINT(speed);
+            if (sVerboseDebug)
+            {
+                DEBUG_PRINT(" speed1="); DEBUG_PRINT(speed);
+            }
             if (speed < (ROTARY_MINIMUM_POWER/100.0))
                 speed = (ROTARY_MINIMUM_POWER/100.0);
-            DEBUG_PRINT(" speed2="); DEBUG_PRINT(speed);
+            if (sVerboseDebug)
+            {
+                DEBUG_PRINT(" speed2="); DEBUG_PRINT(speed);
+            }
             float nm = (dist > 0) ? -speed : speed;
             if (m != 0 && ((m < 0 && nm > 0) || (m > 0 && nm < 0)))
             {
@@ -875,10 +825,16 @@ public:
                 return true;
             }
             m = nm;
-            DEBUG_PRINT(" m="); DEBUG_PRINTLN(m);
+            if (sVerboseDebug)
+            {
+                DEBUG_PRINT(" m="); DEBUG_PRINTLN(m);
+            }
             return false;
         }
-        DEBUG_PRINTLN();
+        if (sVerboseDebug)
+        {
+            DEBUG_PRINTLN();
+        }
     #endif
         return true;
     }
@@ -923,6 +879,7 @@ public:
     #ifndef DISABLE_ROTARY
         if (sSettings.fDisableRotary)
             return;
+        rotaryMotorAbsolutePosition(0, 0.5);
         if (shortestDistance(rotaryMotorCurrentPosition(), 0) > 0)
         {
             rotateLeftHome();
@@ -1162,32 +1119,6 @@ public:
         sPinManager.begin();
 
         setLightShow(kLightKit_Off);
-
-        //////////////////////////
-
-    #ifdef EEPROM_SIZE
-        if (!EEPROM.begin(EEPROM_SIZE))
-        {
-            println("Failed to initialize EEPROM");
-        }
-        else
-    #endif
-        if (sSettings.read())
-        {
-            Serial.println(F("Settings Restored"));
-        }
-        else
-        {
-            Serial.println(F("First Time Settings"));
-            sSettings.write();
-            if (sSettings.read())
-            {
-                Serial.println(F("Readback Success"));
-            }
-        }
-    #ifdef COMMAND_SERIAL
-        COMMAND_SERIAL.begin(sSettings.fBaudRate, SERIAL_8N1, PIN_RXD2, PIN_TXD2);
-    #endif
     }
 
     ///////////////////////////////////
@@ -1297,7 +1228,7 @@ public:
         // On startup we'll first seek to the top and make sure
         // that the rotary is in home position. Then seek back down.
         // This should safely clear any state the scope was in.
-        println("SAFETY");
+        Serial.println("SAFETY");
         if (seekToTop(0.8, false))
         {
         #ifndef DISABLE_SAFETY_MANEUVER
@@ -1317,7 +1248,7 @@ public:
 
                     if (!rotaryHomeLimit())
                     {
-                        println("NOT HOME TRY SPIN AROUND");
+                        Serial.println("NOT HOME TRY SPIN AROUND");
                         bool rotaryWasHome = true;
                         RotaryStatus rotaryStatus;
                         rotaryMotorMove(-(ROTARY_MINIMUM_POWER/100.0));
@@ -1346,7 +1277,7 @@ public:
                     }
                     if (rotaryHomeLimit())
                     {
-                        println("FIND ENCODER LENGTH");
+                        Serial.println("FIND ENCODER LENGTH");
                         resetRotaryPosition();
                         encoder_rotary_last_status = millis();
                         bool rotaryWasHome = true;
@@ -1379,8 +1310,8 @@ public:
                         rotaryMotorStop();
                         delay(100);
                         sRotaryCircleEncoderCount = abs(getRotaryPosition());
-                        print("ROTARY ENCODER COUNT = ");
-                        println(sRotaryCircleEncoderCount);
+                        Serial.print("ROTARY ENCODER COUNT = ");
+                        Serial.println(sRotaryCircleEncoderCount);
                         if (sRotaryCircleEncoderCount < 1000)
                         {
                             // BAD try again
@@ -1403,8 +1334,8 @@ public:
             setLightShow(kLightKit_Off);
             if (!isRotaryAtRest())
             {
-                println("ABORT: ROTARY NOT HOME");
-                println(rotaryMotorCurrentPosition());
+                Serial.println("ABORT: ROTARY NOT HOME");
+                Serial.println(rotaryMotorCurrentPosition());
                 return false;
             }
             // Reset fLifterDistance length
@@ -1423,7 +1354,6 @@ public:
 
     static bool ensureSafetyManeuver()
     {
-        statusLED.setMode(kSafetyMode);
         if (!sSafetyManeuver)
         {
             if (!safetyManeuver())
@@ -1439,7 +1369,7 @@ public:
         sSettings.fMinimumPower = max(int(sSettings.fMinimumPower), LIFTER_MINIMUM_POWER);
         if (!safetyManeuver())
         {
-            println("ABORT: FAILED SAFETY MANEUVER");
+            Serial.println("ABORT: FAILED SAFETY MANEUVER");
             sCalibrating = false;
             return false;
         }
@@ -1448,7 +1378,7 @@ public:
         {
             if (!safetyManeuver())
             {
-                println("ABORT: FAILED SAFETY MANEUVER");
+                Serial.println("ABORT: FAILED SAFETY MANEUVER");
                 sCalibrating = false;
                 return false;
             }
@@ -1475,7 +1405,7 @@ public:
 
         long targetDistance = sSettings.fLifterDistance;
 
-        println("SEEK TO TOP");
+        Serial.println("SEEK TO TOP");
         for (; sCalibrating && topSpeed <= 100; topSpeed += 5)
         {
             unsigned tries = 0;
@@ -1486,7 +1416,7 @@ public:
                 goto retry;
             }
             long outputLimit = max(long(topSpeed * OUTPUT_LIMIT_PRESCALE), 10L);
-            print("SPEED: "); println(topSpeed);
+            Serial.print("SPEED: "); Serial.println(topSpeed);
             while (outputLimit >= 0)
             {
                 tries++;
@@ -1517,7 +1447,7 @@ public:
 
                     if (!lifterStatus.isMoving())
                     {
-                        println("ABORT");
+                        Serial.println("ABORT");
                         break;
                     }
                 }
@@ -1558,7 +1488,7 @@ public:
             }
             if (!sCalibrating || serialAbort())
             {
-                println("SERIAL ABORT");
+                Serial.println("SERIAL ABORT");
                 success = false;
                 break;
             }
@@ -1566,13 +1496,13 @@ public:
         // Abort calibration
         if (!success)
         {
-            println("CALIBRATION ABORTED");
+            Serial.println("CALIBRATION ABORTED");
             sCalibrating = false;
             return false;
         }
 
         sSettings.fUpLimitsCalibrated = true;
-        println("SEEK TO BOTTOM");
+        Serial.println("SEEK TO BOTTOM");
         DEBUG_PRINT("TOP LIMIT SWITCH: ");
         DEBUG_PRINTLN(lifterTopLimit());
         DEBUG_PRINT("BOTTOM LIMIT SWITCH: ");
@@ -1591,7 +1521,7 @@ public:
                 long minEncoderVal = 0x7FFFFFFFL;
                 if (!seekToTop(0.8))
                 {
-                    println("SEEK TO TOP FAILED - ABORT");
+                    Serial.println("SEEK TO TOP FAILED - ABORT");
                     topSpeed = 200;
                     success = false;
                     break;
@@ -1639,7 +1569,7 @@ public:
             }
             if (!sCalibrating || serialAbort())
             {
-                println("SERIAL ABORT");
+                Serial.println("SERIAL ABORT");
                 success = false;
                 break;
             }
@@ -1647,7 +1577,7 @@ public:
         seekToBottom();
         if (!success)
         {
-            println("CALIBRATION ABORTED");
+            Serial.println("CALIBRATION ABORTED");
             sSettings.fMinimumPower = max(int(sSettings.fMinimumPower), LIFTER_MINIMUM_POWER);
             sCalibrating = false;
             return false;
@@ -1655,7 +1585,7 @@ public:
 
         sSettings.fDownLimitsCalibrated = true;
         sSettings.write();
-        println("SUCCESS");
+        Serial.println("SUCCESS");
         sCalibrating = false;
         return true;
     }
@@ -1683,10 +1613,10 @@ public:
                                 retry = !retry;
                                 continue;
                             }
-                            // print("MOVE SEEK ");
-                            // print(pos);
-                            // print(", ");
-                            // println(speedpercentage);
+                            // Serial.print("MOVE SEEK ");
+                            // Serial.print(pos);
+                            // Serial.print(", ");
+                            // Serial.println(speedpercentage);
                             retry = false;
                             break;
                         }
@@ -1713,8 +1643,8 @@ public:
                             {
                                 rotaryMotorSpeed(speed / 100.0);
                             }
-                            // print("MOVE ROTATE ");
-                            // println(speed);
+                            // Serial.print("MOVE ROTATE ");
+                            // Serial.println(speed);
                             retry = false;
                             break;
                         }
@@ -1735,10 +1665,10 @@ public:
                                 maxspeed = speedpercentage/100.0;
                             }
                             rotaryMotorAbsolutePosition(random(360), speed, maxspeed);
-                            // print("MOVE DEGREES ");
-                            // print(speed*100L);
-                            // print(", ");
-                            // println(maxspeed*100L);
+                            // Serial.print("MOVE DEGREES ");
+                            // Serial.print(speed*100L);
+                            // Serial.print(", ");
+                            // Serial.println(maxspeed*100L);
                             retry = false;
                             break;
                         }
@@ -1859,7 +1789,7 @@ public:
         if (!usePID)
         {
             float mpower = sSettings.fMinimumPower/100.0 + 0.05 + 0.1 * speed;
-            print(" MOTOR: "); println(mpower);
+            Serial.print(" MOTOR: "); Serial.println(mpower);
 
             // seek up
             bool topLimit;
@@ -1875,18 +1805,18 @@ public:
                 delay(1);
                 if (!lifterStatus.isMoving())
                 {
-                    printf("ABORT\n");
+                    Serial.println("ABORT");
                     break;
                 }
             }
             if (topLimit)
             {
-                printf("TOP LIMIT REACHED\n");
+                Serial.println("TOP LIMIT REACHED");
                 resetLifterPositionTop();
             }
             else
             {
-                printf("NOT TOP LIMIT\n");
+                Serial.println("NOT TOP LIMIT");
             }
             return topLimit;
         }
@@ -2046,7 +1976,10 @@ public:
                 encoder_lifter_last_status = millis();
                 if (encoder_lifter_changed < 20)
                 {
-                    printf("NO CHANGE\n");
+                    if (sVerboseDebug)
+                    {
+                        Serial.println("NO CHANGE");
+                    }
                     return false;
                 }
                 resetLifterChangedState();
@@ -2185,6 +2118,31 @@ uint8_t PeriscopeLifter::fMoveModeNextIntervalMax;
 ///////////////////////////////////////////////////////
 
 PeriscopeLifter lifter;
+
+///////////////////////////////////////////////////////
+
+#ifdef USE_WIFI
+WifiAccess wifiAccess;
+bool wifiEnabled;
+bool wifiActive;
+#endif
+
+#ifdef USE_DROID_REMOTE
+bool remoteEnabled;
+bool remoteActive;
+#endif
+
+#ifdef USE_WIFI_MARCDUINO
+WifiMarcduinoReceiver wifiMarcduinoReceiver(wifiAccess);
+#endif
+
+#ifdef USE_WIFI
+TaskHandle_t eventTask;
+#endif
+
+#ifdef USE_OTA
+bool otaInProgress;
+#endif
 
 ///////////////////////////////////////////////////////
 
@@ -2425,7 +2383,10 @@ bool processLifterCommand(const char* cmd)
             }
             if (*cmd == '\0' && lifter.rotaryAllowed())
             {
-                Serial.print("ROTARY DEGREE: "); Serial.println(degrees);
+                if (sVerboseDebug)
+                {
+                    Serial.print("ROTARY DEGREE: "); Serial.println(degrees);
+                }
                 if (relative)
                 {
                     lifter.rotaryMotorRelativePosition(degrees);
@@ -2446,19 +2407,23 @@ bool processLifterCommand(const char* cmd)
             // wait seconds
             bool rand = false;
             uint32_t seconds;
-            Serial.print("WAIT: "); Serial.println(cmd);
+            if (sVerboseDebug)
+            {
+                Serial.print("WAIT: "); Serial.println(cmd);
+            }
             if ((rand = (*cmd == 'R')))
                 cmd++;
             seconds = strtolu(cmd, &cmd);
             if (rand)
             {
-                Serial.println(seconds);
                 if (seconds == 0)
                     seconds = 6;
                 seconds = random(1, seconds);
-                Serial.println(seconds);
             }
-            Serial.print("WAIT SECONDS: "); Serial.println(seconds);
+            if (sVerboseDebug)
+            {
+                Serial.print("WAIT SECONDS: "); Serial.println(seconds);
+            }
             if (*cmd == '\0')
             {
                 sWaitNextSerialCommand = millis() + uint32_t(min(max(int(seconds), 1), 600)) * 1000L;
@@ -2533,10 +2498,12 @@ bool processLifterCommand(const char* cmd)
     return true;
 }
 
-void setWifiEnabled(bool state);
-
+#define UPDATE_SETTING(a,b) { \
+    if (a != b) { a = b; needsUpdate = true; } else { unchanged = true; } }
 void processConfigureCommand(const char* cmd)
 {
+    bool needsUpdate = false;
+    bool unchanged = false;
     if (strcmp(cmd, "#PSC") == 0)
     {
         // calibrate
@@ -2560,6 +2527,39 @@ void processConfigureCommand(const char* cmd)
             Serial.println("Invalid");
         }
     }
+    else if (startswith(cmd, "#PZERO"))
+    {
+        sSettings.clearCommands();
+        Serial.println("Cleared");
+    }
+    else if (startswith(cmd, "#PFACTORY"))
+    {
+        sSettings.clearCommands();
+        preferences.clear();
+        Serial.println("Cleared");
+        reboot();
+    }
+    else if (startswith(cmd, "#PRESTART"))
+    {
+        reboot();
+    }
+    else if (startswith(cmd, "#PDEBUG") && isdigit(*cmd))
+    {
+        bool debugSetting = (strtolu(cmd, &cmd) == 1);
+        if (sVerboseDebug != debugSetting)
+        {
+            if (debugSetting)
+            {
+                Serial.println(F("Debug Enabled"));
+            }
+            else
+            {
+                Serial.println(F("Debug Disabled"));
+            }
+            sVerboseDebug = debugSetting;
+        }
+    }
+#ifdef USE_WIFI
     else if (startswith(cmd, "#PWIFIRESET"))
     {
         lifter.lifterMotorStop();
@@ -2570,47 +2570,109 @@ void processConfigureCommand(const char* cmd)
         Serial.println("\n\nWifi credenditals reset to default. Restarting ...\n\n\n"); Serial.flush();
         ESP.restart();
     }
+#endif
+#ifdef USE_WIFI
     else if (startswith(cmd, "#PWIFI"))
     {
-        if (*cmd == '0')
+        bool wifiSetting = wifiEnabled;
+        switch (*cmd)
         {
-            if (preferences.getBool(PREFERENCE_WIFI_ENABLED, WIFI_ENABLED))
-            {
-                lifter.lifterMotorStop();
-                preferences.putBool(PREFERENCE_WIFI_ENABLED, false);
-                preferences.end();
-                Serial.println("\n\nWifi disabled. Restarting .... \n\n\n"); Serial.flush();
-                ESP.restart();
-            }
-            else
-            {
-                Serial.println("Already disabled");
-            }
+            case '0':
+                wifiSetting = false;
+                break;
+            case '1':
+                wifiSetting = true;
+                break;
+            case '\0':
+                // Toggle WiFi
+                wifiSetting = !wifiSetting;
+                break;
         }
-        else if (*cmd == '1')
+        if (wifiEnabled != wifiSetting)
         {
-            if (!preferences.getBool(PREFERENCE_WIFI_ENABLED, WIFI_ENABLED))
+            if (wifiSetting)
             {
-                lifter.lifterMotorStop();
                 preferences.putBool(PREFERENCE_WIFI_ENABLED, true);
-                preferences.end();
-                Serial.println("\n\nWifi enabled. Restarting .... \n\n\n"); Serial.flush();
-                ESP.restart();
+                Serial.println(F("WiFi Enabled"));
             }
             else
             {
-                Serial.println("Already enabled");
+                preferences.putBool(PREFERENCE_WIFI_ENABLED, false);
+                Serial.println(F("WiFi Disabled"));
             }
+            reboot();
         }
         else
         {
-            Serial.println("Invalid");
+            Serial.println(F("Unchanged"));
         }
     }
-    else if (startswith(cmd, "#PZERO"))
+#endif
+#ifdef USE_DROID_REMOTE
+    else if (startswith(cmd, "#PREMOTE") && isdigit(*cmd))
     {
-        sSettings.clearCommands();
-        Serial.println("Cleared");
+        bool remoteSetting = (strtolu(cmd, &cmd) == 1);
+        if (remoteEnabled != remoteSetting)
+        {
+            if (remoteSetting)
+            {
+                preferences.putBool(PREFERENCE_REMOTE_ENABLED, true);
+                Serial.println(F("Remote Enabled"));
+            }
+            else
+            {
+                preferences.putBool(PREFERENCE_REMOTE_ENABLED, false);
+                Serial.println(F("Remote Disabled"));
+            }
+            reboot();
+        }
+    }
+    else if (startswith(cmd, "#PRNAME"))
+    {
+        String newName = String(cmd);
+        if (preferences.getString(PREFERENCE_REMOTE_HOSTNAME, SMQ_HOSTNAME) != newName)
+        {
+            preferences.putString(PREFERENCE_REMOTE_HOSTNAME, cmd);
+            printf("Changed.\n");
+            reboot();
+        }
+    }
+    else if (startswith(cmd, "#PRSECRET"))
+    {
+        String newSecret = String(cmd);
+        if (preferences.getString(PREFERENCE_REMOTE_SECRET, SMQ_HOSTNAME) != newSecret)
+        {
+            preferences.putString(PREFERENCE_REMOTE_SECRET, newSecret);
+            printf("Changed.\n");
+            reboot();
+        }
+    }
+#endif
+    else if (startswith(cmd, "#PSTATUS"))
+    {
+    #ifdef USE_WIFI
+        if (wifiEnabled)
+        {
+            Serial.println(F("WiFi Enabled"));
+        }
+        else
+        {
+            Serial.println(F("WiFi Disabled"));
+        }
+    #endif
+    #ifdef USE_DROID_REMOTE
+        if (remoteEnabled)
+        {
+            Serial.println(F("Remote Enabled"));
+        }
+        else
+        {
+            Serial.println(F("Remote Disabled"));
+        }
+     #endif
+    }
+    else if (startswith(cmd, "#DPCONFIG"))
+    {
     }
     else if (startswith(cmd, "#PL"))
     {
@@ -2922,6 +2984,18 @@ void processConfigureCommand(const char* cmd)
             Serial.println("Invalid");
         }
     }
+    else
+    {
+        Serial.println(F("Invalid"));
+    }
+    if (needsUpdate)
+    {
+        updateSettings();
+    }
+    if (unchanged)
+    {
+        Serial.println(F("Unchanged"));
+    }
 }
 
 bool processCommand(const char* cmd, bool firstCommand)
@@ -2954,21 +3028,23 @@ bool processCommand(const char* cmd, bool firstCommand)
     return false;
 }
 
-///////////////////////////////////////////////////////
-
-#ifdef USE_WIFI
-WifiAccess wifiAccess;
-TaskHandle_t sEventTask;
-#endif
+///////////////////////////////////////////////////////////////////////////////
 
 #ifdef USE_WIFI_WEB
+static bool sUpdateSettings;
 #include "WebPages.h"
 #endif
 
-#ifdef USE_WIFI_MARCDUINO
-WifiMarcduinoReceiver wifiMarcduinoReceiver(wifiAccess);
+///////////////////////////////////////////////////////////////////////////////
+
+#ifdef USE_DROID_REMOTE
+static bool sRemoteActive;
+static SMQAddress sRemoteAddress;
 #endif
 
+///////////////////////////////////////////////////////////////////////////////
+
+#ifdef USE_WIFI
 String getHostName()
 {
     String mac = wifiAccess.getMacAddress();
@@ -2977,8 +3053,65 @@ String getHostName()
     hostName = WIFI_AP_NAME+String("-")+hostName;
     return hostName;
 }
+#endif
 
-///////////////////////////////////////////////////////
+//////////////////////////////////////////////////////
+
+#ifdef USE_MENUS
+
+static unsigned sBooleanValues[] = {
+    false,
+    true,
+};
+
+static const char* sYesNoStrings[] = {
+    "NO",
+    "YES"
+};
+
+static const char* sOnOffStrings[] = {
+    "OFF",
+    "ON"
+};
+
+#include "Screens.h"
+#include "menus/CommandScreen.h"
+
+#include "menus/CommandScreenHandlerSMQ.h"
+CommandScreenHandlerSMQ sDisplay;
+
+#include "menus/utility/ChoiceIntArrayScreen.h"
+#include "menus/utility/ChoiceStrArrayScreen.h"
+#include "menus/utility/UnsignedValueScreen.h"
+#include "menus/utility/MenuScreen.h"
+
+#include "menus/EraseSettingsScreen.h"
+#include "menus/MainScreen.h"
+#include "menus/RotatePeriscopeScreen.h"
+#include "menus/SelectScreen.h"
+#include "menus/SettingsScreen.h"
+#include "menus/SettingsUpdatedScreen.h"
+#ifdef USE_WIFI
+#include "menus/WiFiModeScreen.h"
+#endif
+
+#endif
+
+//////////////////////////////////////////////////////
+
+static int sCurrentInputValue = -1;
+static int readInputHeaders()
+{
+    bool inputA = sPinManager.digitalRead(PIN_INPUT_A);
+    bool inputB = sPinManager.digitalRead(PIN_INPUT_B);
+    bool inputC = sPinManager.digitalRead(PIN_INPUT_C);
+
+    return (uint8_t(!inputA)<<2) |
+           (uint8_t(!inputB)<<1) |
+           (uint8_t(!inputC)<<0);
+}
+
+//////////////////////////////////////////////////////
 
 void setup()
 {
@@ -2989,94 +3122,157 @@ void setup()
         DEBUG_PRINTLN("Failed to init prefs");
     }
 
-#ifdef USE_WIFI_WEB
-    wifiAccess.setNetworkCredentials(
-        preferences.getString(PREFERENCE_WIFI_SSID, getHostName()),
-        preferences.getString(PREFERENCE_WIFI_PASS, WIFI_AP_PASSPHRASE),
-        preferences.getBool(PREFERENCE_WIFI_AP, WIFI_ACCESS_POINT),
-        preferences.getBool(PREFERENCE_WIFI_ENABLED, WIFI_ENABLED));
+#ifdef USE_WIFI
+    wifiEnabled = wifiActive = preferences.getBool(PREFERENCE_WIFI_ENABLED, WIFI_ENABLED);
 #endif
+#ifdef USE_DROID_REMOTE
+    remoteEnabled = remoteActive = preferences.getBool(PREFERENCE_REMOTE_ENABLED, REMOTE_ENABLED);
+#endif
+
+    PrintReelTwoInfo(Serial, "Uppity Spinner");
+
+#ifdef EEPROM_SIZE
+    if (!EEPROM.begin(EEPROM_SIZE))
+    {
+        Serial.println(F("Failed to initialize EEPROM"));
+    }
+    else
+#endif
+    if (sSettings.read())
+    {
+        Serial.println(F("Settings Restored"));
+    }
+    else
+    {
+        Serial.println(F("First Time Settings"));
+        sSettings.write();
+        if (sSettings.read())
+        {
+            Serial.println(F("Readback Success"));
+        }
+    }
 
     Wire.begin();
     SetupEvent::ready();
 
+#ifdef COMMAND_SERIAL
+    COMMAND_SERIAL.begin(sSettings.fBaudRate, SERIAL_8N1, PIN_RXD2, PIN_TXD2);
+#endif
+
     lifter.disableMotors();
     Serial.println("READY");
 
-#ifdef USE_WIFI_WEB
-    wifiAccess.notifyWifiConnected([](WifiAccess &wifi) {
-    #ifdef PIN_STATUSLED
-        statusLED.setMode(kWifiMode);
-    #endif
-        Serial.print("Connect to http://"); Serial.println(wifi.getIPAddress());
-    #ifdef USE_MDNS
-        // No point in setting up mDNS if R2 is the access point
-        if (!wifi.isSoftAP())
+#ifdef USE_DROID_REMOTE
+    if (remoteEnabled)
+    {
+    #ifdef USE_SMQ
+        WiFi.mode(WIFI_MODE_APSTA);
+        if (SMQ::init(preferences.getString(PREFERENCE_REMOTE_HOSTNAME, SMQ_HOSTNAME),
+                        preferences.getString(PREFERENCE_REMOTE_SECRET, SMQ_SECRET)))
         {
-            if (webServer.enabled())
-            {
-                String hostName = getHostName();
-                Serial.print("Host name: "); Serial.println(hostName);
-                if (!MDNS.begin(hostName.c_str()))
+            printf("Droid Remote Enabled %s:%s\n",
+                preferences.getString(PREFERENCE_REMOTE_HOSTNAME, SMQ_HOSTNAME).c_str(),
+                    preferences.getString(PREFERENCE_REMOTE_SECRET, SMQ_SECRET).c_str());
+            SMQ::setHostDiscoveryCallback([](SMQHost* host) {
+                if (host->hasTopic("LCD"))
                 {
-                    DEBUG_PRINTLN("Error setting up MDNS responder!");
+                    printf("Remote Discovered: %s\n", host->getHostName().c_str());
+                }
+            });
+
+            SMQ::setHostLostCallback([](SMQHost* host) {
+                printf("Lost: %s [%s] [%s]\n", host->getHostName().c_str(), host->getHostAddress().c_str(),
+                    sRemoteAddress.toString().c_str());
+                if (sRemoteAddress.equals(host->fAddr))
+                {
+                    printf("DISABLING REMOTE\n");
+                    sDisplay.setEnabled(false);
+                }
+            });
+        }
+        else
+        {
+            printf("Failed to activate Droid Remote\n");
+        }
+    #endif
+    }
+#endif
+#ifdef USE_WIFI
+    if (wifiEnabled)
+    {
+    #ifdef USE_WIFI_WEB
+        // In preparation for adding WiFi settings web page
+        wifiAccess.setNetworkCredentials(
+            preferences.getString(PREFERENCE_WIFI_SSID, getHostName()),
+            preferences.getString(PREFERENCE_WIFI_PASS, WIFI_AP_PASSPHRASE),
+            preferences.getBool(PREFERENCE_WIFI_AP, WIFI_ACCESS_POINT),
+            preferences.getBool(PREFERENCE_WIFI_ENABLED, WIFI_ENABLED));
+    #ifdef USE_WIFI_MARCDUINO
+        wifiMarcduinoReceiver.setEnabled(preferences.getBool(PREFERENCE_MARCWIFI_ENABLED, MARC_WIFI_ENABLED));
+        if (wifiMarcduinoReceiver.enabled())
+        {
+            wifiMarcduinoReceiver.setCommandHandler([](const char* cmd) {
+                printf("[JAWALITE] %s\n", cmd)
+                executeCommand(cmd);
+            });
+        }
+    #endif
+        wifiAccess.notifyWifiConnected([](WifiAccess &wifi) {
+        #ifdef PIN_STATUSLED
+            statusLED.setMode(sCurrentMode = kWifiModeHome);
+        #endif
+            Serial.print("Connect to http://"); Serial.println(wifi.getIPAddress());
+        #ifdef USE_MDNS
+            // No point in setting up mDNS if R2 is the access point
+            if (!wifi.isSoftAP() && webServer.enabled())
+            {
+                if (webServer.enabled())
+                {
+                    String hostName = getHostName();
+                    Serial.print("Host name: "); Serial.println(hostName);
+                    if (!MDNS.begin(hostName.c_str()))
+                    {
+                        DEBUG_PRINTLN("Error setting up MDNS responder!");
+                    }
                 }
             }
-        }
-    #endif
-    });
-#endif
-
-#ifdef USE_OTA
-    ArduinoOTA.onStart([]()
-    {
-        String type;
-        if (ArduinoOTA.getCommand() == U_FLASH)
-        {
-            type = "sketch";
-        }
-        else // U_SPIFFS
-        {
-            type = "filesystem";
-        }
-        DEBUG_PRINTLN("OTA START");
-        // Kill the motors
-        lifter.lifterMotorStop();
-    })
-    .onEnd([]()
-    {
-        DEBUG_PRINTLN("OTA END");
-    })
-    .onProgress([](unsigned int progress, unsigned int total)
-    {
-        // float range = (float)progress / (float)total;
-    })
-    .onError([](ota_error_t error)
-    {
-        String desc;
-        if (error == OTA_AUTH_ERROR) desc = "Auth Failed";
-        else if (error == OTA_BEGIN_ERROR) desc = "Begin Failed";
-        else if (error == OTA_CONNECT_ERROR) desc = "Connect Failed";
-        else if (error == OTA_RECEIVE_ERROR) desc = "Receive Failed";
-        else if (error == OTA_END_ERROR) desc = "End Failed";
-        else desc = "Error: "+String(error);
-        DEBUG_PRINTLN(desc);
-    });
-#endif
-
-#ifdef USE_WIFI_MARCDUINO
-    wifiMarcduinoReceiver.setEnabled(preferences.getBool(PREFERENCE_MARCWIFI_ENABLED, MARC_WIFI_ENABLED));
-    if (wifiMarcduinoReceiver.enabled())
-    {
-        wifiMarcduinoReceiver.setCommandHandler([](const char* cmd) {
-            Marcduino::processCommand(player, cmd);
-            if (preferences.getBool(PREFERENCE_MARCWIFI_SERIAL_PASS, MARC_WIFI_SERIAL_PASS) &&
-                preferences.getBool(PREFERENCE_MARCSERIAL_ENABLED, MARC_SERIAL_ENABLED) &&
-                preferences.getBool(PREFERENCE_MARCSERIAL_PASS, MARC_SERIAL_PASS))
-            {
-                executeCommand(cmd);
-            }
+        #endif
         });
+    #endif
+    #ifdef USE_OTA
+        ArduinoOTA.onStart([]()
+        {
+            String type;
+            if (ArduinoOTA.getCommand() == U_FLASH)
+            {
+                type = "sketch";
+            }
+            else // U_SPIFFS
+            {
+                type = "filesystem";
+            }
+            DEBUG_PRINTLN("OTA START");
+        })
+        .onEnd([]()
+        {
+            DEBUG_PRINTLN("OTA END");
+        })
+        .onProgress([](unsigned int progress, unsigned int total)
+        {
+            // float range = (float)progress / (float)total;
+        })
+        .onError([](ota_error_t error)
+        {
+            String desc;
+            if (error == OTA_AUTH_ERROR) desc = "Auth Failed";
+            else if (error == OTA_BEGIN_ERROR) desc = "Begin Failed";
+            else if (error == OTA_CONNECT_ERROR) desc = "Connect Failed";
+            else if (error == OTA_RECEIVE_ERROR) desc = "Receive Failed";
+            else if (error == OTA_END_ERROR) desc = "End Failed";
+            else desc = "Error: "+String(error);
+            DEBUG_PRINTLN(desc);
+        });
+    #endif
     }
 #endif
 
@@ -3087,39 +3283,123 @@ void setup()
         // DEBUG_PRINTLN("Hello");
     });
 #endif
+#if defined(USE_WIFI) || defined(USE_DROID_REMOTE)
     xTaskCreatePinnedToCore(
           eventLoopTask,
           "Events",
           5000,    // shrink stack size?
           NULL,
           1,
-          &sEventTask,
+          &eventTask,
           0);
+#endif
+
+    if (sRCMode)
+        sPPM.begin();
+
+    sCurrentInputValue = readInputHeaders();
 }
 
-void eventLoop()
-{
-#ifdef USE_OTA
-    ArduinoOTA.handle();
-#endif
-#ifdef USE_WIFI_WEB
-    webServer.handle();
-#endif
-}
-
-void eventLoopTask(void* arg)
+#if defined(USE_WIFI) || defined(USE_DROID_REMOTE) || defined(USE_LVGL_DISPLAY)
+void eventLoopTask(void* )
 {
     for (;;)
     {
-        eventLoop();
+        if (wifiActive)
+        {
+        #ifdef USE_OTA
+            ArduinoOTA.handle();
+        #endif
+        #ifdef USE_WIFI_WEB
+            webServer.handle();
+        #endif
+        }
+        if (remoteActive)
+        {
+        #ifdef USE_SMQ
+            SMQ::process();
+        #endif
+        }
+    #ifdef USE_MENUS
+        sDisplay.process();
+    #endif
         vTaskDelay(1);
     }
+}
+#endif
+
+///////////////////////////////////////////////////////////////////////////////
+
+#ifdef USE_SMQ
+SMQMESSAGE(DIAL, {
+    long newValue = msg.get_int32("new");
+    long oldValue = msg.get_int32("old");
+    sDisplay.remoteDialEvent(newValue, oldValue);
+})
+
+///////////////////////////////////////////////////////////////////////////////
+
+SMQMESSAGE(BUTTON, {
+    uint8_t id = msg.get_uint8("id");
+    bool pressed = msg.get_uint8("pressed");
+    bool repeat = msg.get_uint8("repeat");
+    sDisplay.remoteButtonEvent(id, pressed, repeat);
+})
+
+///////////////////////////////////////////////////////////////////////////////
+
+SMQMESSAGE(SELECT, {
+    printf("REMOTE ACTIVE\n");
+    sRemoteActive = true;
+    sRemoteAddress = SMQ::messageSender();
+    sMainScreen.init();
+    sDisplay.remoteActive();
+})
+#endif
+
+#ifdef USE_DROID_REMOTE
+static void DisconnectRemote()
+{
+#ifdef USE_SMQ
+    if (sRemoteActive)
+    {
+        sRemoteActive = false;
+        if (SMQ::sendTopic("EXIT", "Remote"))
+        {
+            SMQ::sendString("addr", SMQ::getAddress());
+            SMQ::sendEnd();
+            sDisplay.setEnabled(false);
+        #ifdef STATUSLED_PIN
+            statusLED.setMode(sCurrentMode = kNormalMode);
+        #endif
+        }
+    }
+#endif
+}
+#endif
+
+///////////////////////////////////////////////////////
+
+static void updateSettings()
+{
+    Serial.println(F("Write Settings"));
+    sSettings.write();
+    Serial.println(F("Updated"));
+#ifdef USE_WIFI_WEB
+    sUpdateSettings = false;
+#endif
 }
 
 ///////////////////////////////////////////////////////
 
 void loop()
 {
+#ifdef USE_WIFI_WEB
+    if (sUpdateSettings)
+    {
+        updateSettings();
+    }
+#endif
     AnimatedEvent::process();
     lifter.animate();
 
@@ -3142,15 +3422,19 @@ void loop()
     if (COMMAND_SERIAL.available())
     {
         int ch = COMMAND_SERIAL.read();
-        printf("ch: %c [%d]\n", ch, ch);
-        if (ch == 0x0A || ch == 0x0D)
+        if (sPos != 0 || (ch == ':' || ch == '#'))
         {
-            runSerialCommand();
-        }
-        else if (sPos < SizeOfArray(sBuffer)-1)
-        {
-            sBuffer[sPos++] = ch;
-            sBuffer[sPos] = '\0';
+            // Reduce serial noise by ignoring anything that doesn't start with : or #
+            printf("ch: %c [%d]\n", ch, ch);
+            if (ch == 0x0A || ch == 0x0D)
+            {
+                runSerialCommand();
+            }
+            else if (sPos < SizeOfArray(sBuffer)-1)
+            {
+                sBuffer[sPos++] = ch;
+                sBuffer[sPos] = '\0';
+            }
         }
     }
 #endif
@@ -3172,8 +3456,11 @@ void loop()
             {
                 *end = ':';
                 strcpy(sCmdBuffer, end);
-                DEBUG_PRINT("REMAINS: ");
-                DEBUG_PRINTLN(sCmdBuffer);
+                if (sVerboseDebug)
+                {
+                    DEBUG_PRINT("REMAINS: ");
+                    DEBUG_PRINTLN(sCmdBuffer);
+                }
                 sCmdNextCommand = true;
             }
             else
@@ -3199,8 +3486,11 @@ void loop()
                 *end = ':';
                 strcpy(sBuffer, end);
                 sPos = strlen(sBuffer);
-                DEBUG_PRINT("REMAINS: ");
-                DEBUG_PRINTLN(sBuffer);
+                if (sVerboseDebug)
+                {
+                    DEBUG_PRINT("REMAINS: ");
+                    DEBUG_PRINTLN(sBuffer);
+                }
                 sNextCommand = true;
             }
             else
@@ -3215,26 +3505,51 @@ void loop()
             resetSerialCommand();
         }
     }
+    static char sRotaryHomeStatus = -1;
     if (lifter.isIdle() && lifter.motorsEnabled())
     {
         DEBUG_PRINTLN("DISABLE MOTORS");
         lifter.disableMotors();
+        sRotaryHomeStatus = -1;
     }
-    static bool sHome;
-    if (sHome != lifter.rotaryHomeLimit())
+    char rotaryIsHome = lifter.rotaryHomeLimit();
+    if (sRotaryHomeStatus != rotaryIsHome)
     {
-        sHome = lifter.rotaryHomeLimit();
-        if (sHome)
+        sRotaryHomeStatus = rotaryIsHome;
+        if (rotaryIsHome)
+        {
             Serial.println("HOME");
+        #ifdef PIN_STATUSLED
+            statusLED.setMode(sCurrentMode + kNormalModeHome);
+        #endif
+        }
+        else
+        {
+        #ifdef PIN_STATUSLED
+            statusLED.setMode(sCurrentMode + kNormalModeAway);
+        #endif
+        }
     }
     if (sDigitalReadAll)
     {
         sDigitalReadAll = false;
-        static PCF8574::DigitalInput sLastFlags;
-        PCF8574::DigitalInput sNowFlags;
-        sNowFlags = sGPIOExpander.digitalReadAll();
+        static CustomPinManager::DigitalInput sLastFlags;
+        CustomPinManager::DigitalInput sNowFlags;
+        sNowFlags = sPinManager.digitalReadAll();
         if (memcmp(&sLastFlags, &sNowFlags, sizeof(sLastFlags)) != 0)
         {
+            int inputValue = readInputHeaders();
+            if (inputValue != sCurrentInputValue)
+            {
+                sCurrentInputValue = inputValue;
+                if (inputValue != 0)
+                {
+                    char buffer[10];
+                    snprintf(buffer, sizeof(buffer), ":PS%d", inputValue);
+                    printf("[INPUT] :PS%d\n", inputValue);
+                    executeCommand(buffer);
+                }
+            }
             sLastFlags = sNowFlags;
         }
     }
@@ -3282,30 +3597,33 @@ void loop()
     // }
 
 #ifdef USE_DEBUG
-    static bool sLastTop;
-    static bool sLastBot;
-    static bool sLastRot;
-    static long sLastLifter;
-    static long sLastRotary;
-    if (sLastTop != lifter.lifterTopLimit() ||
-        sLastBot != lifter.lifterBottomLimit() ||
-        sLastRot != lifter.rotaryHomeLimit() ||
-        sLastLifter != lifter.getLifterPosition() ||
-        sLastRotary != lifter.getRotaryPosition())
+    if (sVerboseDebug)
     {
-        sLastTop = lifter.lifterTopLimit();
-        sLastBot = lifter.lifterBottomLimit();
-        sLastRot = lifter.rotaryHomeLimit();
-        sLastLifter = lifter.getLifterPosition();
-        sLastRotary = lifter.getRotaryPosition();
-        printf("T: %d B: %d R: %d H: %d D: %d P: %d F: %d\n",
-            int(sLastTop),
-            int(sLastBot),
-            int(sLastRot),
-            int(sLastLifter/float(sSettings.fLifterDistance)*100.0),
-            int(lifter.rotaryMotorCurrentPosition()),
-            int(lifter.getRotaryPosition()),
-            int(lifter.lifterMotorFault()));
+        static bool sLastTop;
+        static bool sLastBot;
+        static bool sLastRot;
+        static long sLastLifter;
+        static long sLastRotary;
+        if (sLastTop != lifter.lifterTopLimit() ||
+            sLastBot != lifter.lifterBottomLimit() ||
+            sLastRot != lifter.rotaryHomeLimit() ||
+            sLastLifter != lifter.getLifterPosition() ||
+            sLastRotary != lifter.getRotaryPosition())
+        {
+            sLastTop = lifter.lifterTopLimit();
+            sLastBot = lifter.lifterBottomLimit();
+            sLastRot = lifter.rotaryHomeLimit();
+            sLastLifter = lifter.getLifterPosition();
+            sLastRotary = lifter.getRotaryPosition();
+            printf("T: %d B: %d R: %d H: %d D: %d P: %d F: %d\n",
+                int(sLastTop),
+                int(sLastBot),
+                int(sLastRot),
+                int(sLastLifter/float(sSettings.fLifterDistance)*100.0),
+                int(lifter.rotaryMotorCurrentPosition()),
+                int(lifter.getRotaryPosition()),
+                int(lifter.lifterMotorFault()));
+        }
     }
 #endif
 }

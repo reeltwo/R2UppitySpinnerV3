@@ -15,7 +15,7 @@ If you want a snappy hyper caffinated periscope you should use a 6V lifter motor
 <ul>
 <li>https://github.com/reeltwo/Reeltwo</li>
 <li>https://github.com/adafruit/Adafruit_NeoPixel</li>
-<li>https://github.com/xreef/PCF8574_library</li>
+<li>https://github.com/reeltwo/PCF8574</li>
 </ul>
 
 # Assembling R2 Uppity Spinner PCB Part 1

@@ -18,6 +18,7 @@ WMenuData setupMenu[] = {
     { "Calibrate", "/calibrate" },
     { "Marcduino", "/marcduino" },
     { "WiFi", "/wifi" },
+    { "Remote", "/remote" },
     { "Firmware", "/firmware" },
     { "Back", "/" }
 };
@@ -154,10 +155,11 @@ WElement marcduinoContents[] = {
     rseriesSVG
 };
 
+////////////////////////////////
+
 String wifiSSID;
 String wifiPass;
 bool wifiAP;
-bool wifiEnabled;
 
 WElement wifiContents[] = {
     W1("WiFi Setup"),
@@ -179,9 +181,7 @@ WElement wifiContents[] = {
         preferences.putBool(PREFERENCE_WIFI_AP, wifiAP);
         preferences.putString(PREFERENCE_WIFI_SSID, wifiSSID);
         preferences.putString(PREFERENCE_WIFI_PASS, wifiPass);
-        DEBUG_PRINTLN("Restarting");
-        preferences.end();
-        ESP.restart();
+        reboot();
     }),
     WHorizontalAlign(),
     WButton("Back", "back", "/setup"),
@@ -190,6 +190,38 @@ WElement wifiContents[] = {
     WVerticalAlign(),
     rseriesSVG
 };
+
+////////////////////////////////
+
+String remoteHostName;
+String remoteSecret;
+
+WElement remoteContents[] = {
+    W1("Droid Remote Setup"),
+    WCheckbox("Droid Remote Enabled", "remoteenabled",
+        []() { return remoteEnabled; },
+        [](bool val) { remoteEnabled = val; } ),
+    WHR(),
+    WTextField("Device Name:", "hostname",
+        []()->String { return (remoteHostName = preferences.getString(PREFERENCE_REMOTE_HOSTNAME, SMQ_HOSTNAME)); },
+        [](String val) { remoteHostName = val; } ),
+    WPassword("Secret:", "secret",
+        []()->String { return (remoteSecret = preferences.getString(PREFERENCE_REMOTE_SECRET, SMQ_SECRET)); },
+        [](String val) { remoteSecret = val; } ),
+    WButton("Save", "save", []() {
+        DEBUG_PRINTLN("Remote Changed");
+        preferences.putBool(PREFERENCE_REMOTE_ENABLED, remoteEnabled);
+        preferences.putString(PREFERENCE_REMOTE_HOSTNAME, remoteHostName);
+        preferences.putString(PREFERENCE_REMOTE_SECRET, remoteSecret);
+        reboot();
+    }),
+    WHorizontalAlign(),
+    WButton("Home", "home", "/"),
+    WVerticalAlign(),
+    rseriesSVG
+};
+
+////////////////////////////////
 
 WElement firmwareContents[] = {
     W1("Firmware Setup"),
@@ -206,9 +238,7 @@ WElement firmwareContents[] = {
     }),
     WHorizontalAlign(),
     WButton("Reboot", "reboot", []() {
-        DEBUG_PRINTLN("Rebooting");
-        preferences.end();
-        ESP.restart();
+        reboot();
     }),
     WHorizontalAlign(),
     WButton("Back", "back", "/setup"),
@@ -225,6 +255,7 @@ WPage pages[] = {
       WPage("/calibrate", calibrateContents, SizeOfArray(calibrateContents)),
       WPage("/marcduino", marcduinoContents, SizeOfArray(marcduinoContents)),
       WPage("/wifi", wifiContents, SizeOfArray(wifiContents)),
+      WPage("/remote", remoteContents, SizeOfArray(remoteContents)),
       WPage("/firmware", firmwareContents, SizeOfArray(firmwareContents)),
         WUpload("/upload/firmware",
             [](Client& client)
