@@ -1,3 +1,24 @@
+/*
+ * --------------------------------------------------------------------
+ * DomeControlFirmware (https://github.com/reeltwo/DomeControlFirmware)
+ * --------------------------------------------------------------------
+ * Written by Mimir Reynisson (skelmir)
+ *
+ * DomeControlFirmware is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * DomeControlFirmware is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with DomeControlFirmware; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ */
+
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-parameter"
 #pragma GCC diagnostic ignored "-Wimplicit-fallthrough"
@@ -17,6 +38,7 @@
 ///////////////////////////////////
 
 #define USE_DEBUG
+// #define USE_SMQDEBUG
 //#define USE_LEDLIB 0
 #define USE_DROID_REMOTE              // Define for droid remote support
 #define USE_WIFI                      // Define to WiFi Support
@@ -126,6 +148,8 @@
 #define PREFERENCE_REMOTE_ENABLED       "remote"
 #define PREFERENCE_REMOTE_HOSTNAME      "rhost"
 #define PREFERENCE_REMOTE_SECRET        "rsecret"
+#define PREFERENCE_REMOTE_PAIRED        "rpaired"
+#define PREFERENCE_REMOTE_LMK           "rlmk"
 #define PREFERENCE_WIFI_ENABLED         "wifi"
 #define PREFERENCE_WIFI_SSID            "ssid"
 #define PREFERENCE_WIFI_PASS            "pass"
@@ -2543,6 +2567,27 @@ void processConfigureCommand(const char* cmd)
     {
         reboot();
     }
+#ifdef USE_DROID_REMOTE
+    else if (startswith(cmd, "#PRMASTERKEY0"))
+    {
+        if (preferences.remove(PREFERENCE_REMOTE_LMK))
+        {
+            printf("Master Key Deleted.\n");
+        }
+        else
+        {
+            printf("No master key.\n");
+        }
+    }
+    else if (startswith(cmd, "#PRMASTERKEY"))
+    {
+        SMQLMK lmk;
+        printf("New Master Key Generated. All devices must be paired again\n");
+        SMQ::createLocalMasterKey(&lmk);
+        preferences.putBytes(PREFERENCE_REMOTE_LMK, &lmk, sizeof(lmk));
+        SMQ::setLocalMasterKey(&lmk);
+    }
+#endif
     else if (startswith(cmd, "#PDEBUG") && isdigit(*cmd))
     {
         bool debugSetting = (strtolu(cmd, &cmd) == 1);
@@ -2645,6 +2690,23 @@ void processConfigureCommand(const char* cmd)
             preferences.putString(PREFERENCE_REMOTE_SECRET, newSecret);
             printf("Changed.\n");
             reboot();
+        }
+    }
+    else if (startswith(cmd, "#PRPAIR"))
+    {
+        printf("Pairing Started ...\n");
+        SMQ::startPairing();
+    }
+    else if (startswith(cmd, "#PRUNPAIR"))
+    {
+        if (preferences.remove(PREFERENCE_REMOTE_PAIRED))
+        {
+            printf("Unpairing Success...\n");
+            reboot();
+        }
+        else
+        {
+            printf("Not Paired...\n");
         }
     }
 #endif
@@ -3038,7 +3100,8 @@ static bool sUpdateSettings;
 ///////////////////////////////////////////////////////////////////////////////
 
 #ifdef USE_DROID_REMOTE
-static bool sRemoteActive;
+static bool sRemoteConnected;
+static bool sRemoteConnecting;
 static SMQAddress sRemoteAddress;
 #endif
 
@@ -3170,9 +3233,68 @@ void setup()
         if (SMQ::init(preferences.getString(PREFERENCE_REMOTE_HOSTNAME, SMQ_HOSTNAME),
                         preferences.getString(PREFERENCE_REMOTE_SECRET, SMQ_SECRET)))
         {
+            SMQLMK key;
+            if (preferences.getBytes(PREFERENCE_REMOTE_LMK, &key, sizeof(SMQLMK)) == sizeof(SMQLMK))
+            {
+                SMQ::setLocalMasterKey(&key);
+            }
+
+            SMQAddressKey pairedHosts[SMQ_MAX_PAIRED_HOSTS];
+            size_t pairedHostsSize = preferences.getBytesLength(PREFERENCE_REMOTE_PAIRED);
+            unsigned numHosts = pairedHostsSize / sizeof(pairedHosts[0]);
+            printf("numHosts: %d\n", numHosts);
+            Serial.print("WiFi.macAddress() : "); Serial.println(WiFi.macAddress());
+            if (numHosts != 0)
+            {
+                if (preferences.getBytes(PREFERENCE_REMOTE_PAIRED, pairedHosts, pairedHostsSize) == pairedHostsSize)
+                {
+                    SMQ::addPairedHosts(numHosts, pairedHosts);
+                }
+            }
             printf("Droid Remote Enabled %s:%s\n",
                 preferences.getString(PREFERENCE_REMOTE_HOSTNAME, SMQ_HOSTNAME).c_str(),
                     preferences.getString(PREFERENCE_REMOTE_SECRET, SMQ_SECRET).c_str());
+            SMQ::setHostPairingCallback([](SMQHost* host) {
+                if (host == nullptr)
+                {
+                    printf("Pairing timed out\n");
+                }
+                else //if (host->hasTopic("LCD"))
+                {
+                    switch (SMQ::masterKeyExchange(&host->fLMK))
+                    {
+                        case -1:
+                            printf("Pairing Stopped\n");
+                            SMQ::stopPairing();
+                            return;
+                        case 1:
+                            // Save new master key
+                            SMQLMK lmk;
+                            SMQ::getLocalMasterKey(&lmk);
+                            printf("Saved new master key\n");
+                            preferences.putBytes(PREFERENCE_REMOTE_LMK, &lmk, sizeof(lmk));
+                            break;
+                        case 0:
+                            // We had the master key
+                            break;
+                    }
+                    printf("Pairing: %s [%s]\n", host->getHostName().c_str(), host->fLMK.toString().c_str());
+                    if (SMQ::addPairedHost(&host->fAddr, &host->fLMK))
+                    {
+                        SMQAddressKey pairedHosts[SMQ_MAX_PAIRED_HOSTS];
+                        unsigned numHosts = SMQ::getPairedHostCount();
+                        if (SMQ::getPairedHosts(pairedHosts, numHosts) == numHosts)
+                        {
+                            preferences.putBytes(PREFERENCE_REMOTE_PAIRED,
+                                pairedHosts, numHosts*sizeof(pairedHosts[0]));
+                            printf("Pairing Success\n");
+                        }
+                    }
+                    printf("Pairing Stopped\n");
+                    SMQ::stopPairing();
+                }
+            });
+
             SMQ::setHostDiscoveryCallback([](SMQHost* host) {
                 if (host->hasTopic("LCD"))
                 {
@@ -3183,7 +3305,7 @@ void setup()
             SMQ::setHostLostCallback([](SMQHost* host) {
                 printf("Lost: %s [%s] [%s]\n", host->getHostName().c_str(), host->getHostAddress().c_str(),
                     sRemoteAddress.toString().c_str());
-                if (sRemoteAddress.equals(host->fAddr))
+                if (sRemoteAddress.equals(host->fAddr.fData))
                 {
                     printf("DISABLING REMOTE\n");
                     sDisplay.setEnabled(false);
@@ -3321,6 +3443,12 @@ void eventLoopTask(void* )
         #endif
         }
     #ifdef USE_MENUS
+        if (sRemoteConnecting)
+        {
+            sMainScreen.init();
+            sDisplay.remoteActive();
+            sRemoteConnecting = false;
+        }
         sDisplay.process();
     #endif
         vTaskDelay(1);
@@ -3349,11 +3477,10 @@ SMQMESSAGE(BUTTON, {
 ///////////////////////////////////////////////////////////////////////////////
 
 SMQMESSAGE(SELECT, {
-    printf("REMOTE ACTIVE\n");
-    sRemoteActive = true;
+    printf("\nREMOTE ACTIVE\n");
+    sRemoteConnected = true;
+    sRemoteConnecting = true;
     sRemoteAddress = SMQ::messageSender();
-    sMainScreen.init();
-    sDisplay.remoteActive();
 })
 #endif
 
@@ -3361,13 +3488,15 @@ SMQMESSAGE(SELECT, {
 static void DisconnectRemote()
 {
 #ifdef USE_SMQ
-    if (sRemoteActive)
+    printf("DisconnectRemote : %d\n", sRemoteConnected);
+    if (sRemoteConnected)
     {
-        sRemoteActive = false;
         if (SMQ::sendTopic("EXIT", "Remote"))
         {
             SMQ::sendString("addr", SMQ::getAddress());
             SMQ::sendEnd();
+            printf("SENT EXIT\n");
+            sRemoteConnected = false;
             sDisplay.setEnabled(false);
         #ifdef STATUSLED_PIN
             statusLED.setMode(sCurrentMode = kNormalMode);
