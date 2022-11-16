@@ -39,12 +39,15 @@
 
 #define USE_DEBUG
 // #define USE_SMQDEBUG
-//#define USE_LEDLIB 0
 #define USE_DROID_REMOTE              // Define for droid remote support
 #define USE_WIFI                      // Define to WiFi Support
 #define USE_WIFI_WEB                  // Define for configuration website
+#define USE_WIFI_MARCDUINO            // Define to enable Marcudino command handler on port 2000
 #define USE_MDNS                      // Define for mDNS support
 #define USE_OTA                       // Define for OTA support
+
+// Define if using Uppity Spinner PCB with SD Card
+//#define USE_SDCARD                  // Define SD card support
 
 // #define DISABLE_ROTARY
 
@@ -176,11 +179,19 @@
  #ifdef USE_WIFI_WEB
   #include "wifi/WifiWebServer.h"
  #endif
+ #ifdef USE_WIFI_MARCDUINO
+  #include "wifi/WifiMarcduinoReceiver.h"
+ #endif
 #endif
 #ifdef USE_OTA
 #include <ArduinoOTA.h>
 #endif
 #include <Preferences.h>
+
+#ifdef USE_SDCARD
+#include "FS.h"
+#include "SD.h"
+#endif
 
 #ifdef USE_DROID_REMOTE
 #define USE_MENUS
@@ -198,7 +209,11 @@ Preferences preferences;
 #define GPIO_EXPANDER_ADDRESS 0x20
 #endif
 
-static void IRAM_ATTR flagDigitalReadAll();
+static volatile bool sDigitalReadAll = true;
+static void IRAM_ATTR flagDigitalReadAll()
+{
+    sDigitalReadAll = true;
+}
 
 class CustomPinManager : public PinManager
 {
@@ -213,7 +228,7 @@ public:
     {
         if (pin >= GPIO_PIN_BASE)
         {
-            return fGPIOExpander.digitalRead(pin-GPIO_PIN_BASE, true);
+            return fGPIOExpander.digitalRead(pin-GPIO_PIN_BASE, sDigitalReadAll);
         }
         return PinManager::digitalRead(pin);
     }
@@ -254,12 +269,6 @@ protected:
     PCF8574 fGPIOExpander;
 };
 CustomPinManager sPinManager;
-
-static volatile bool sDigitalReadAll;
-static void IRAM_ATTR flagDigitalReadAll()
-{
-    sDigitalReadAll = true;
-}
 
 #else
 PinManager sPinManager;
@@ -360,7 +369,7 @@ static bool sVerboseDebug;
 static void runSerialCommand()
 {
     sWaitNextSerialCommand = 0;
-    sProcessing = true;
+    sProcessing = (sPos != 0);
 }
 
 static void resetSerialCommand()
@@ -386,10 +395,72 @@ static void executeCommand(const char* cmd, ...)
 
 PPMReader sPPM(PIN_PPMIN_RC, 6);
 
+#ifdef USE_SDCARD
+static bool sSDCardMounted;
+#endif
+
+bool mountReadOnlyFileSystem()
+{
+#ifdef USE_SPIFFS
+    return (SPIFFS.begin(true));
+#endif
+    return false;
+}
+
+bool mountWritableFileSystem()
+{
+#ifdef USE_FATFS
+    return (FFat.begin(true, "/fatfs"));
+#endif
+    return false;
+}
+
+bool getSDCardMounted()
+{
+#ifdef USE_SDCARD
+    return sSDCardMounted;
+#else
+    return false;
+#endif
+}
+
+bool mountSDFileSystem()
+{
+#ifdef USE_SDCARD
+    if (SD.begin(PIN_SD_CS))
+    {
+        DEBUG_PRINTLN("Card Mount Success");
+        sSDCardMounted = true;
+        return true;
+    }
+    DEBUG_PRINTLN("Card Mount Failed");
+#endif
+    return false;
+}
+
+void unmountSDFileSystem()
+{
+#ifdef USE_SDCARD
+    if (sSDCardMounted)
+    {
+        sSDCardMounted = false;
+        SD.end();
+    }
+#endif
+}
+
 void unmountFileSystems()
 {
-
+    unmountSDFileSystem();
+#ifdef USE_FATFS
+    FFat.end();
+#endif
+#ifdef USE_SPIFFS
+    SPIFFS.end();
+#endif
 }
+
+///////////////////////////////////
 
 void reboot()
 {
@@ -1133,6 +1204,7 @@ public:
         sPinManager.pinMode(PIN_LIGHTKIT_B, OUTPUT);
         sPinManager.pinMode(PIN_LIGHTKIT_C, OUTPUT);
 
+    #ifndef USE_SDCARD
         //////////////////////////////
         // ANALOG SEQUENCE SELECT PINS
         //////////////////////////////
@@ -1140,6 +1212,8 @@ public:
         sPinManager.pinMode(PIN_INPUT_A, INPUT_PULLUP);
         sPinManager.pinMode(PIN_INPUT_B, INPUT_PULLUP);
         sPinManager.pinMode(PIN_INPUT_C, INPUT_PULLUP);
+    #endif
+
         sPinManager.begin();
 
         setLightShow(kLightKit_Off);
@@ -3165,6 +3239,7 @@ CommandScreenHandlerSMQ sDisplay;
 static int sCurrentInputValue = -1;
 static int readInputHeaders()
 {
+#ifndef USE_SDCARD
     bool inputA = sPinManager.digitalRead(PIN_INPUT_A);
     bool inputB = sPinManager.digitalRead(PIN_INPUT_B);
     bool inputC = sPinManager.digitalRead(PIN_INPUT_C);
@@ -3172,6 +3247,9 @@ static int readInputHeaders()
     return (uint8_t(!inputA)<<2) |
            (uint8_t(!inputB)<<1) |
            (uint8_t(!inputC)<<0);
+#else
+    return 0;
+#endif
 }
 
 //////////////////////////////////////////////////////
@@ -3184,6 +3262,40 @@ void setup()
     {
         DEBUG_PRINTLN("Failed to init prefs");
     }
+#ifdef USE_SDCARD
+    mountSDFileSystem();
+
+    delay(200);
+
+    if (getSDCardMounted())
+    {
+        File binImage = SD.open("/UPPITY.BIN");
+        if (binImage)
+        {
+            Serial.println("Firmware image found on SD card");
+            Serial.print("Reflashing");
+            Update.begin(binImage.size());
+            uint32_t readSize = 0;
+            while (binImage.available())
+            {
+                uint8_t buf = binImage.read();
+                Update.write(&buf, 1);
+                readSize++;
+                if ((readSize % 102400) == 0)
+                    Serial.print(".");
+            }
+            Serial.println("");
+            binImage.close();
+            // Delete the image file so we don't constantly reflash the box
+            SD.remove("/UPPITY.BIN");
+            if (Update.end(true))
+            {
+                Serial.println("Update Success: "); Serial.println(readSize);
+                reboot();
+            }
+        }
+    }
+#endif
 
 #ifdef USE_WIFI
     wifiEnabled = wifiActive = preferences.getBool(PREFERENCE_WIFI_ENABLED, WIFI_ENABLED);
@@ -3334,7 +3446,7 @@ void setup()
         if (wifiMarcduinoReceiver.enabled())
         {
             wifiMarcduinoReceiver.setCommandHandler([](const char* cmd) {
-                printf("[JAWALITE] %s\n", cmd)
+                printf("[JAWALITE] %s\n", cmd);
                 executeCommand(cmd);
             });
         }
@@ -3343,12 +3455,12 @@ void setup()
         #ifdef PIN_STATUSLED
             statusLED.setMode(sCurrentMode = kWifiModeHome);
         #endif
-            Serial.print("Connect to http://"); Serial.println(wifi.getIPAddress());
-        #ifdef USE_MDNS
-            // No point in setting up mDNS if R2 is the access point
-            if (!wifi.isSoftAP() && webServer.enabled())
+            if (webServer.enabled())
             {
-                if (webServer.enabled())
+                Serial.print("Connect to http://"); Serial.println(wifi.getIPAddress());
+            #ifdef USE_MDNS
+                // No point in setting up mDNS if R2 is the access point
+                if (!wifi.isSoftAP())
                 {
                     String hostName = getHostName();
                     Serial.print("Host name: "); Serial.println(hostName);
