@@ -119,6 +119,8 @@ Set ID # of this lifter. Default ID # is 0.
 
 ### ID prefix
 For droids using multiple lifters you can assign each a different ID number. You can then send a command to a specific lifter.
+
+*Examples*:
     :P1S1   (Lifter with ID #1 play sequence 1)
     :PS1    (All lifter play sequence 1)
     :P1L7   (Set sparkle light sequence on lifter with ID #1)
