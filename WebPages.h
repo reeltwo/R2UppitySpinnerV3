@@ -132,20 +132,31 @@ String swBaudRates[] = {
     "9600",
 };
 
-int marcSerialBaud;
 bool marcWifiEnabled;
+int marcID;
+int marcBaudRate;
 
 WElement marcduinoContents[] = {
+    WTextFieldInteger("ID#", "marcID",
+        []()->String { return String(marcID = sSettings.fID); },
+        [](String val) { marcID = val.toInt(); }),
     WSelect("Serial Baud Rate", "serialbaud",
         swBaudRates, SizeOfArray(swBaudRates),
-        []() { return (marcSerialBaud = (preferences.getInt(PREFERENCE_MARCSERIAL, MARC_SERIAL_BAUD_RATE)) == 2400) ? 0 : 1; },
-        [](int val) { marcSerialBaud = (val == 0) ? 2400 : 9600; } ),
+        []() { return ((marcBaudRate = sSettings.fBaudRate) == 2400) ? 0 : 1; },
+        [](int val) { marcBaudRate = (val == 0) ? 2400 : 9600; }),
     WCheckbox("Marcduino on Wifi (port 2000)", "wifienabled",
         []() { return (marcWifiEnabled = (preferences.getBool(PREFERENCE_MARCWIFI_ENABLED, MARC_WIFI_ENABLED))); },
         [](bool val) { marcWifiEnabled = val; } ),
     WButton("Save", "save", []() {
-        preferences.putInt(PREFERENCE_MARCSERIAL, marcSerialBaud);
         preferences.putBool(PREFERENCE_MARCWIFI_ENABLED, marcWifiEnabled);
+        if (marcID != sSettings.fID)
+        {
+            sSettings.fID = marcID; sUpdateSettings = true;
+        }
+        if (marcBaudRate != sSettings.fBaudRate)
+        {
+            sSettings.fID = marcBaudRate; sUpdateSettings = true;
+        }
     }),
     WHorizontalAlign(),
     WButton("Back", "back", "/setup"),

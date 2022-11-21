@@ -70,7 +70,6 @@
 #define WIFI_ACCESS_POINT                   true  /* true if access point: false if joining existing wifi */
 #endif
 
-#define MARC_SERIAL_BAUD_RATE               9600
 #define MARC_SERIAL_ENABLED                 true
 #define MARC_WIFI_ENABLED                   false
 
@@ -341,7 +340,11 @@ struct LifterSettings
         };
         uint8_t fFlags;
     };
-    uint32_t fBaudRate = SERIAL_BAUD_RATE;
+    unsigned fBaudRate = SERIAL_BAUD_RATE;
+    unsigned fID = 0;
+    unsigned fReserved1 = 0;
+    unsigned fReserved2 = 0;
+    unsigned fReserved3 = 0;
 
     static constexpr size_t limitCount()
     {
@@ -2602,13 +2605,13 @@ void processConfigureCommand(const char* cmd)
 {
     bool needsUpdate = false;
     bool unchanged = false;
-    if (strcmp(cmd, "#PSC") == 0)
+    if (strcmp(cmd, "SC") == 0)
     {
         // calibrate
         if (!lifter.calibrate())
             lifter.disableMotors();
     }
-    else if (startswith(cmd, "#PRC"))
+    else if (startswith(cmd, "RC"))
     {
         if (*cmd == '0')
         {
@@ -2625,24 +2628,34 @@ void processConfigureCommand(const char* cmd)
             Serial.println("Invalid");
         }
     }
-    else if (startswith(cmd, "#PZERO"))
+    else if (startswith(cmd, "ID") && isdigit(*cmd))
+    {
+        uint32_t id = strtolu(cmd, &cmd);
+        if (id != sSettings.fID)
+        {
+            sSettings.fID = id;
+            Serial.print("ID Changed to: "); Serial.println(sSettings.fID);
+            sSettings.write();
+        }
+    }
+    else if (startswith(cmd, "ZERO"))
     {
         sSettings.clearCommands();
         Serial.println("Cleared");
     }
-    else if (startswith(cmd, "#PFACTORY"))
+    else if (startswith(cmd, "FACTORY"))
     {
         sSettings.clearCommands();
         preferences.clear();
         Serial.println("Cleared");
         reboot();
     }
-    else if (startswith(cmd, "#PRESTART"))
+    else if (startswith(cmd, "RESTART"))
     {
         reboot();
     }
 #ifdef USE_DROID_REMOTE
-    else if (startswith(cmd, "#PRMASTERKEY0"))
+    else if (startswith(cmd, "RMASTERKEY0"))
     {
         if (preferences.remove(PREFERENCE_REMOTE_LMK))
         {
@@ -2653,7 +2666,7 @@ void processConfigureCommand(const char* cmd)
             printf("No master key.\n");
         }
     }
-    else if (startswith(cmd, "#PRMASTERKEY"))
+    else if (startswith(cmd, "RMASTERKEY"))
     {
         SMQLMK lmk;
         printf("New Master Key Generated. All devices must be paired again\n");
@@ -2662,7 +2675,7 @@ void processConfigureCommand(const char* cmd)
         SMQ::setLocalMasterKey(&lmk);
     }
 #endif
-    else if (startswith(cmd, "#PDEBUG") && isdigit(*cmd))
+    else if (startswith(cmd, "DEBUG") && isdigit(*cmd))
     {
         bool debugSetting = (strtolu(cmd, &cmd) == 1);
         if (sVerboseDebug != debugSetting)
@@ -2679,7 +2692,7 @@ void processConfigureCommand(const char* cmd)
         }
     }
 #ifdef USE_WIFI
-    else if (startswith(cmd, "#PWIFIRESET"))
+    else if (startswith(cmd, "WIFIRESET"))
     {
         lifter.lifterMotorStop();
         preferences.putString(PREFERENCE_WIFI_SSID, getHostName());
@@ -2691,7 +2704,7 @@ void processConfigureCommand(const char* cmd)
     }
 #endif
 #ifdef USE_WIFI
-    else if (startswith(cmd, "#PWIFI"))
+    else if (startswith(cmd, "WIFI"))
     {
         bool wifiSetting = wifiEnabled;
         switch (*cmd)
@@ -2728,7 +2741,7 @@ void processConfigureCommand(const char* cmd)
     }
 #endif
 #ifdef USE_DROID_REMOTE
-    else if (startswith(cmd, "#PREMOTE") && isdigit(*cmd))
+    else if (startswith(cmd, "REMOTE") && isdigit(*cmd))
     {
         bool remoteSetting = (strtolu(cmd, &cmd) == 1);
         if (remoteEnabled != remoteSetting)
@@ -2746,7 +2759,7 @@ void processConfigureCommand(const char* cmd)
             reboot();
         }
     }
-    else if (startswith(cmd, "#PRNAME"))
+    else if (startswith(cmd, "RNAME"))
     {
         String newName = String(cmd);
         if (preferences.getString(PREFERENCE_REMOTE_HOSTNAME, SMQ_HOSTNAME) != newName)
@@ -2756,7 +2769,7 @@ void processConfigureCommand(const char* cmd)
             reboot();
         }
     }
-    else if (startswith(cmd, "#PRSECRET"))
+    else if (startswith(cmd, "RSECRET"))
     {
         String newSecret = String(cmd);
         if (preferences.getString(PREFERENCE_REMOTE_SECRET, SMQ_HOSTNAME) != newSecret)
@@ -2766,12 +2779,12 @@ void processConfigureCommand(const char* cmd)
             reboot();
         }
     }
-    else if (startswith(cmd, "#PRPAIR"))
+    else if (startswith(cmd, "RPAIR"))
     {
         printf("Pairing Started ...\n");
         SMQ::startPairing();
     }
-    else if (startswith(cmd, "#PRUNPAIR"))
+    else if (startswith(cmd, "RUNPAIR"))
     {
         if (preferences.remove(PREFERENCE_REMOTE_PAIRED))
         {
@@ -2784,7 +2797,7 @@ void processConfigureCommand(const char* cmd)
         }
     }
 #endif
-    else if (startswith(cmd, "#PSTATUS"))
+    else if (startswith(cmd, "STATUS"))
     {
     #ifdef USE_WIFI
         if (wifiEnabled)
@@ -2807,15 +2820,25 @@ void processConfigureCommand(const char* cmd)
         }
      #endif
     }
-    else if (startswith(cmd, "#DPCONFIG"))
+    else if (startswith(cmd, "CONFIG"))
     {
+        Serial.print(F("ID#:             ")); Serial.println(sSettings.fID);
+        Serial.print(F("Baud Rate:       ")); Serial.println(sSettings.fBaudRate);
+        Serial.print(F("Rotary Disabled: ")); Serial.println(sSettings.fDisableRotary);
+        Serial.print(F("Min Power:       ")); Serial.println(sSettings.fMinimumPower);
+        Serial.print(F("Distance:        ")); Serial.println(sSettings.fLifterDistance);
+        Serial.print(F("Lifter Limit:    ")); Serial.println(sSettings.fLifterLimitSetting);
+        Serial.print(F("Rotary Limit:    ")); Serial.println(sSettings.fRotaryLimitSetting);
+        Serial.print(F("Up Calibrated:   ")); Serial.println(sSettings.fUpLimitsCalibrated);
+        Serial.print(F("Down Calibrated: ")); Serial.println(sSettings.fDownLimitsCalibrated);
+        Serial.print(F("Safety Maneuver: ")); Serial.println(sSettings.fSafetyManeuver);
     }
-    else if (startswith(cmd, "#PL"))
+    else if (startswith(cmd, "L"))
     {
         Serial.println("Stored Sequences:");
         sSettings.listSortedCommands(Serial);
     }
-    else if (startswith(cmd, "#PD"))
+    else if (startswith(cmd, "D"))
     {
         if (isdigit(*cmd))
         {
@@ -2825,7 +2848,7 @@ void processConfigureCommand(const char* cmd)
                 Serial.println("Deleted");
         }
     }
-    else if (startswith(cmd, "#PBAUD"))
+    else if (startswith(cmd, "BAUD"))
     {
         uint32_t baudrate = strtolu(cmd, &cmd);
         if (baudrate > 1200 && sSettings.fBaudRate != baudrate)
@@ -2835,7 +2858,7 @@ void processConfigureCommand(const char* cmd)
             sSettings.write();
         }
     }
-    else if (startswith(cmd, "#PR"))
+    else if (startswith(cmd, "R"))
     {
         lifter.lifterMotorStop();
         sSettings.fDisableRotary = !sSettings.fDisableRotary;
@@ -2844,7 +2867,7 @@ void processConfigureCommand(const char* cmd)
         Serial.flush(); delay(1000);
         ESP.restart();
     }
-    else if (startswith(cmd, "#PN"))
+    else if (startswith(cmd, "N"))
     {
         if (cmd[1] == 'L')
         {
@@ -2876,7 +2899,7 @@ void processConfigureCommand(const char* cmd)
             Serial.println("Invalid");
         }
     }
-    else if (startswith(cmd, "#PS"))
+    else if (startswith(cmd, "S"))
     {
         uint32_t storeseq = strtolu(cmd, &cmd);
         if (*cmd == ':')
@@ -3152,11 +3175,52 @@ bool processCommand(const char* cmd, bool firstCommand)
     {
         case ':':
             if (cmd[1] == 'P')
-                return processLifterCommand(cmd+2);
+            {
+                // Check if followed by ID
+                cmd += 2;
+                if (isdigit(*cmd))
+                {
+                    uint32_t id = 0;
+                    while (isdigit(*cmd))
+                    {
+                        id = id*10L + (*cmd-'0');
+                        cmd++;
+                    }
+                    if (id != sSettings.fID)
+                    {
+                        // Command not meant for this ID
+                        resetSerialCommand();
+                        return true;
+                    }
+                }
+                return processLifterCommand(cmd);
+            }
             break;
         case '#':
-            processConfigureCommand(cmd);
-            return true;
+            if (cmd[1] == 'P')
+            {
+                // Check if followed by ID
+                cmd += 2;
+                if (isdigit(*cmd))
+                {
+                    uint32_t id = 0;
+                    while (isdigit(*cmd))
+                    {
+                        id = id*10L + (*cmd-'0');
+                        cmd++;
+                    }
+                    if (id != sSettings.fID)
+                    {
+                        // Command not meant for this ID
+                        resetSerialCommand();
+                        return true;
+                    }
+                }
+                processConfigureCommand(cmd);
+                return true;
+            }
+            Serial.println("Invalid");
+            break;
         default:
             Serial.println("Invalid");
             break;

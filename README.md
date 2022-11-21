@@ -106,6 +106,25 @@ Set rotary limit switch to normally open.
 
 	#PNOR (rotary limit normally open)
 
+Multiple Lifters
+================
+For droids using multiple lifters you can assign each a different ID number. You can send a command to a specific lifter by prefixing the ID.
+
+`#PID`[id]
+Set ID # of this lifter. Default ID # is 0.
+*Examples*:
+
+	#PID1 (set lifter ID # to 1)
+	#PID2 (set lifter ID # to 2)
+
+### ID prefix
+For droids using multiple lifters you can assign each a different ID number. You can then send a command to a specific lifter.
+    :P1S1   (Lifter with ID #1 play sequence 1)
+    :PS1    (All lifter play sequence 1)
+    :P1L7   (Set sparkle light sequence on lifter with ID #1)
+    :PL7    (Set sparkle light sequence on all lifters)
+    #P1CONFIG (Show configuration of lifter #1)
+
 Lifter commands
 ===============
 
@@ -122,10 +141,11 @@ Would raise the periscope. Wait 2 seconds. Lower the periscope. Separately the c
 ### Play stored sequence
 
 `S`[number]:
-Sequences can be stored using #PS
+To play a stored sequence
 *Examples*:
 
-    #PS0:H:L0:P100,5:W2:P50,25:W2:P85,35:A90,20:W2:A270,20,100:W2:P100,100:L5:R50:W4:H
+    :PS1    (play sequence stored with #PS1)
+    :P1S1   (Lifter with ID #1 play sequence 1)
 
 ### Wait number of seconds
 `W`[R]seconds:
