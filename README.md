@@ -70,12 +70,6 @@ Change system baudrate. Settings will be stored in EEPROM and take affect once t
 
 	#PBAUD9600               (set baud rate to 9600)
 
-`#PI2C`[address]
-Change system I2C address. Settings will be stored in EEPROM and take affect once the board is reset.
-*Examples*:
-
-	#PI2C128                 (set I2C address to 128)
-
 `#PR`
 Enable/disable rotary unit. This will reboot the board. The setting will persist between reboots.
 *Examples*:
