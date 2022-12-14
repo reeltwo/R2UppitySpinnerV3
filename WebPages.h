@@ -17,6 +17,7 @@ WMenuData setupMenu[] = {
     { "Home", "/" },
     { "Calibrate", "/calibrate" },
     { "Marcduino", "/marcduino" },
+    { "Parameters", "/parameters" },
     { "WiFi", "/wifi" },
     { "Remote", "/remote" },
     { "Firmware", "/firmware" },
@@ -168,6 +169,73 @@ WElement marcduinoContents[] = {
 
 ////////////////////////////////
 
+int paramLifterMinPower;
+int paramLifterSeekBotPower;
+int paramRotaryMinPower;
+int paramLifterDistance;
+int paramMinHeight;
+bool paramRotDisabled;
+
+WElement parametersContents[] = {
+    WTextFieldInteger("Min Lifter Power", "lftminpwr",
+        []()->String { return String(paramLifterMinPower = LIFTER_MINIMUM_POWER); },
+        [](String val) { paramLifterMinPower = val.toInt(); }),
+    WTextFieldInteger("Min Seek Bottom Power", "lftseekbotpwr",
+        []()->String { return String(paramLifterSeekBotPower = LIFTER_SEEKBOTTTOM_POWER); },
+        [](String val) { paramLifterSeekBotPower = val.toInt(); }),
+    WTextFieldInteger("Min Rotary Power", "rotminpwr",
+        []()->String { return String(paramRotaryMinPower = ROTARY_MINIMUM_POWER); },
+        [](String val) { paramRotaryMinPower = val.toInt(); }),
+    WTextFieldInteger("Lifter Distance", "lftdist",
+        []()->String { return String(paramLifterDistance = LIFTER_DISTANCE); },
+        [](String val) { paramLifterDistance = val.toInt(); }),
+    WTextFieldInteger("Rotary Minimum Height", "minheight",
+        []()->String { return String(paramMinHeight = ROTARY_MINIMUM_HEIGHT); },
+        [](String val) { paramMinHeight = val.toInt(); }),
+    WCheckbox("Disable Rotary Unit", "rotdisabled",
+        []() { return paramRotDisabled = sSettings.fDisableRotary; },
+        [](bool val) { paramRotDisabled = val; } ),
+    WHorizontalAlign(),
+    WLabel("Lifter Defaults:", "greglabel"),
+    WButtonReload("Greg", "greg", []() {
+        LIFTER_MINIMUM_POWER = GREG_LIFTER_MINIMUM_POWER;
+        LIFTER_SEEKBOTTTOM_POWER = GREG_LIFTER_SEEKBOTTTOM_POWER;
+        ROTARY_MINIMUM_POWER = GREG_ROTARY_MINIMUM_POWER;
+        LIFTER_DISTANCE = GREG_LIFTER_DISTANCE;
+        ROTARY_MINIMUM_HEIGHT = LIFTER_DISTANCE / 2;
+    }),
+    WHorizontalAlign(),
+    WLabel("Lifter Defaults:", "iapartslabel"),
+    WButtonReload("IA-Parts", "iaparts", []() {
+        LIFTER_MINIMUM_POWER = IAPARTS_LIFTER_MINIMUM_POWER;
+        LIFTER_SEEKBOTTTOM_POWER = IAPARTS_LIFTER_SEEKBOTTTOM_POWER;
+        ROTARY_MINIMUM_POWER = IAPARTS_ROTARY_MINIMUM_POWER;
+        LIFTER_DISTANCE = IAPARTS_LIFTER_DISTANCE;
+        ROTARY_MINIMUM_HEIGHT = LIFTER_DISTANCE / 2;
+    }),
+    WVerticalAlign(),
+    WButton("Save", "save", []() {
+        LIFTER_MINIMUM_POWER = min(max(paramLifterMinPower, 0), 100);
+        LIFTER_SEEKBOTTTOM_POWER = min(max(paramLifterSeekBotPower, 0), 100);
+        ROTARY_MINIMUM_POWER = min(max(paramRotaryMinPower, 0), 100);
+        LIFTER_DISTANCE = max(paramLifterDistance, 0);
+        ROTARY_MINIMUM_HEIGHT = min(max(paramMinHeight, 0), paramLifterDistance);
+        sLifterParameters.save();
+        if (paramRotDisabled != sSettings.fDisableRotary)
+        {
+            sSettings.fDisableRotary = paramRotDisabled; sUpdateSettings = true;
+        }
+    }),
+    WHorizontalAlign(),
+    WButton("Back", "back", "/setup"),
+    WHorizontalAlign(),
+    WButton("Home", "home", "/"),
+    WVerticalAlign(),
+    rseriesSVG
+};
+
+////////////////////////////////
+
 String wifiSSID;
 String wifiPass;
 bool wifiAP;
@@ -265,6 +333,7 @@ WPage pages[] = {
     WPage("/setup", setupContents, SizeOfArray(setupContents)),
       WPage("/calibrate", calibrateContents, SizeOfArray(calibrateContents)),
       WPage("/marcduino", marcduinoContents, SizeOfArray(marcduinoContents)),
+      WPage("/parameters", parametersContents, SizeOfArray(parametersContents)),
       WPage("/wifi", wifiContents, SizeOfArray(wifiContents)),
       WPage("/remote", remoteContents, SizeOfArray(remoteContents)),
       WPage("/firmware", firmwareContents, SizeOfArray(firmwareContents)),

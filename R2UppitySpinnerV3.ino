@@ -93,18 +93,24 @@
 ///////////////////////////////////
 
 // IA-Parts lifter defaults
-#define LIFTER_MINIMUM_POWER                30      // 30 out of 100. Don't bother with lower values. Won't lift reliably
-#define LIFTER_SEEKBOTTTOM_POWER            30      // 30 out of 100. Lower than LIFTER_MINIMUM_POWER because we are going down
-#define ROTARY_MINIMUM_POWER                20      // 20 out of 100. Don't bother with lower values. Won't rotate reliably
-#define LIFTER_DISTANCE                     845     // default value - lifter will calibrate
+#define IAPARTS_LIFTER_MINIMUM_POWER        30      // 30 out of 100. Don't bother with lower values. Won't lift reliably
+#define IAPARTS_LIFTER_SEEKBOTTTOM_POWER    30      // 30 out of 100. Lower than LIFTER_MINIMUM_POWER because we are going down
+#define IAPARTS_ROTARY_MINIMUM_POWER        20      // 20 out of 100. Don't bother with lower values. Won't rotate reliably
+#define IAPARTS_LIFTER_DISTANCE             845     // default value - lifter will calibrate
 
 // Greg Hulette’s Periscope Lifter
-//#define LIFTER_MINIMUM_POWER              65      // 65 out of 100. Don't bother with lower values. Won't lift reliably
-//#define LIFTER_SEEKBOTTTOM_POWER          40      // 40 out of 100. Lower than LIFTER_MINIMUM_POWER because we are going down
-//#define ROTARY_MINIMUM_POWER              40      // 40 out of 100. Don't bother with lower values. Won't rotate reliably
-//#define LIFTER_DISTANCE                   1200     // default value 1200 - lifter will calibrate
+#define GREG_LIFTER_MINIMUM_POWER           65      // 65 out of 100. Don't bother with lower values. Won't lift reliably
+#define GREG_LIFTER_SEEKBOTTTOM_POWER       40      // 40 out of 100. Lower than LIFTER_MINIMUM_POWER because we are going down
+#define GREG_ROTARY_MINIMUM_POWER           40      // 40 out of 100. Don't bother with lower values. Won't rotate reliably
+#define GREG_LIFTER_DISTANCE                1200     // default value 1200 - lifter will calibrate
 
-#define ROTARY_MINIMUM_HEIGHT               LIFTER_DISTANCE/2
+// lifter defaults
+#define DEFAULT_LIFTER_MINIMUM_POWER        IAPARTS_LIFTER_MINIMUM_POWER
+#define DEFAULT_LIFTER_SEEKBOTTTOM_POWER    IAPARTS_LIFTER_SEEKBOTTTOM_POWER
+#define DEFAULT_ROTARY_MINIMUM_POWER        IAPARTS_ROTARY_MINIMUM_POWER
+#define DEFAULT_LIFTER_DISTANCE             IAPARTS_LIFTER_DISTANCE
+
+#define DEFAULT_ROTARY_MINIMUM_HEIGHT       DEFAULT_LIFTER_DISTANCE/2
 
 #define MOTOR_TIMEOUT                       2000
 #define OUTPUT_LIMIT_PRESCALE               3.1
@@ -159,6 +165,12 @@
 
 #define PREFERENCE_MARCSERIAL           "mserial"
 #define PREFERENCE_MARCWIFI_ENABLED     "mwifi"
+
+#define PREFERENCES_PARAM_LIFTER_MINIMUM_POWER  "lftminpwr"
+#define PREFERENCES_PARAM_LIFTER_SEEKBOT_POWER  "lftseekbotpwr"
+#define PREFERENCES_PARAM_ROTARY_MINIMUM_POWER  "rotminpwr"
+#define PREFERENCES_PARAM_LIFTER_DISTANCE       "lftdist"
+#define PREFERENCES_PARAM_ROTARY_MININUM_HEIGHT "minheight"
 
 ///////////////////////////////////
 
@@ -313,6 +325,45 @@ StatusLED statusLED(kStatusColors, SizeOfArray(kStatusColors));
 
 ///////////////////////////////////
 
+struct LifterParameters
+{
+    int fLifterMinPower;
+    int fLifterMinSeekBotPower;
+    int fRotaryMinPower;
+    int fLifterDistance;
+    int fRotaryMinHeight;
+
+    void load()
+    {
+        fLifterMinPower = preferences.getInt(PREFERENCES_PARAM_LIFTER_MINIMUM_POWER, DEFAULT_LIFTER_MINIMUM_POWER);
+        fLifterMinSeekBotPower = preferences.getInt(PREFERENCES_PARAM_LIFTER_SEEKBOT_POWER, DEFAULT_LIFTER_SEEKBOTTTOM_POWER);
+        fRotaryMinPower = preferences.getInt(PREFERENCES_PARAM_ROTARY_MINIMUM_POWER, DEFAULT_ROTARY_MINIMUM_POWER);
+        fLifterDistance = preferences.getInt(PREFERENCES_PARAM_LIFTER_DISTANCE, DEFAULT_LIFTER_DISTANCE);
+        fRotaryMinHeight = preferences.getInt(PREFERENCES_PARAM_ROTARY_MININUM_HEIGHT, DEFAULT_ROTARY_MINIMUM_HEIGHT);
+    }
+
+    void save()
+    {
+        preferences.putInt(PREFERENCES_PARAM_LIFTER_MINIMUM_POWER, fLifterMinPower);
+        preferences.putInt(PREFERENCES_PARAM_LIFTER_SEEKBOT_POWER, fLifterMinSeekBotPower);
+        preferences.putInt(PREFERENCES_PARAM_ROTARY_MINIMUM_POWER, fRotaryMinPower);
+        preferences.putInt(PREFERENCES_PARAM_LIFTER_DISTANCE, fLifterDistance);
+        preferences.putInt(PREFERENCES_PARAM_ROTARY_MININUM_HEIGHT, fRotaryMinHeight);
+    }
+};
+
+LifterParameters sLifterParameters;
+
+///////////////////////////////////
+
+#define LIFTER_MINIMUM_POWER        sLifterParameters.fLifterMinPower
+#define LIFTER_SEEKBOTTTOM_POWER    sLifterParameters.fLifterMinSeekBotPower
+#define ROTARY_MINIMUM_POWER        sLifterParameters.fRotaryMinPower
+#define LIFTER_DISTANCE             sLifterParameters.fLifterDistance
+#define ROTARY_MINIMUM_HEIGHT       sLifterParameters.fRotaryMinHeight
+
+///////////////////////////////////
+
 #define ENCODER_STATUS_RATE 200 // ms (10Hz)
 
 struct OutputLimit
@@ -325,8 +376,8 @@ struct LifterSettings
 {
     OutputLimit fUpLimits[100/5+1];
     OutputLimit fDownLimits[sizeof(fUpLimits)/sizeof(fUpLimits[0])];
-    unsigned fMinimumPower = LIFTER_MINIMUM_POWER;
-    unsigned fLifterDistance = LIFTER_DISTANCE;
+    unsigned fMinimumPower = 0;
+    unsigned fLifterDistance = 0;
     union
     {
         struct
@@ -350,6 +401,9 @@ struct LifterSettings
     {
         return sizeof(fUpLimits)/sizeof(fUpLimits[0]);
     }
+
+#define PREFERENCES_PARAM_LIFTER_SEEKBOT_POWER  "lftseekbotpwr"
+#define PREFERENCES_PARAM_ROTARY_MINIMUM_POWER  "rotminpwr"
 };
 EEPROMSettings<LifterSettings> sSettings;
 
@@ -742,7 +796,7 @@ public:
         // Rotary motion not allowed
         return false;
     #else
-        return !sSettings.fDisableRotary && (getLifterPosition() > ROTARY_MINIMUM_HEIGHT);
+        return !sSettings.fDisableRotary && (getLifterPosition() > sLifterParameters.fRotaryMinHeight);
     #endif
     }
 
@@ -2647,6 +2701,7 @@ void processConfigureCommand(const char* cmd)
     {
         sSettings.clearCommands();
         preferences.clear();
+        sLifterParameters.load();
         Serial.println("Cleared");
         reboot();
     }
@@ -3360,6 +3415,7 @@ void setup()
         }
     }
 #endif
+    sLifterParameters.load();
 
 #ifdef USE_WIFI
     wifiEnabled = wifiActive = preferences.getBool(PREFERENCE_WIFI_ENABLED, WIFI_ENABLED);
