@@ -2635,10 +2635,13 @@ bool processLifterCommand(const char* cmd)
                 }
                 if (!lifter.seekToPosition(0, speed/100.0))
                 {
-                    // If we failed we try one more time
-                    lifter.seekToPosition(1.0, speed/100.0);
-                    lifter.rotateHome();
-                    lifter.seekToPosition(0, speed/100.0);
+                    if (lifter.getLifterPosition() > 5)
+                    {
+                        // If we failed and lifter not close to 0 position we try one more time
+                        lifter.seekToPosition(1.0, speed/100.0);
+                        lifter.rotateHome();
+                        lifter.seekToPosition(0, speed/100.0);
+                    }
                 }
             }
             break;
