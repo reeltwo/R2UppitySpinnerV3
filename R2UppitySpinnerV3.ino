@@ -102,7 +102,7 @@
 #define GREG_LIFTER_MINIMUM_POWER           65      // 65 out of 100. Don't bother with lower values. Won't lift reliably
 #define GREG_LIFTER_SEEKBOTTTOM_POWER       40      // 40 out of 100. Lower than LIFTER_MINIMUM_POWER because we are going down
 #define GREG_ROTARY_MINIMUM_POWER           40      // 40 out of 100. Don't bother with lower values. Won't rotate reliably
-#define GREG_LIFTER_DISTANCE                1200     // default value 1200 - lifter will calibrate
+#define GREG_LIFTER_DISTANCE                450     // default value 450 - lifter will calibrate
 
 // lifter defaults
 #define DEFAULT_LIFTER_MINIMUM_POWER        IAPARTS_LIFTER_MINIMUM_POWER
@@ -396,6 +396,11 @@ struct LifterSettings
     unsigned fReserved1 = 0;
     unsigned fReserved2 = 0;
     unsigned fReserved3 = 0;
+
+    unsigned getLifterDistance()
+    {
+        return fLifterDistance != 0 ? fLifterDistance : sLifterParameters.fLifterDistance;
+    }
 
     static constexpr size_t limitCount()
     {
@@ -720,7 +725,7 @@ public:
         if (speed * 100 < sSettings.fMinimumPower)
             return seekToPositionSlow(pos, speed/(sSettings.fMinimumPower/100.0));
 
-        long maxlen = sSettings.fLifterDistance;
+        long maxlen = sSettings.getLifterDistance();
         long current = getLifterPosition();
         long target_ticks = pos * maxlen;
 
@@ -1308,7 +1313,7 @@ public:
 
                 if (!lifterStatus.isMoving())
                 {
-                    DEBUG_PRINTLN("ABORT");
+                    DEBUG_PRINTLN("ABORT NOT MOVING");
                     break;
                 }
             }
@@ -1558,7 +1563,7 @@ public:
         }
         seekToBottom(false);
 
-        long targetDistance = sSettings.fLifterDistance;
+        long targetDistance = sSettings.getLifterDistance();
 
         Serial.println("SEEK TO TOP");
         for (; sCalibrating && topSpeed <= 100; topSpeed += 5)
@@ -1887,7 +1892,7 @@ private:
         cli();
         encoder_lifter_val = 0;
         encoder_lifter_pin_A_last = 0;
-        encoder_lifter_ticks = sSettings.fLifterDistance;    
+        encoder_lifter_ticks = sSettings.getLifterDistance();
         sei();
     }
 
@@ -1982,7 +1987,7 @@ public:
             return false;
         }
         speed = min(max(speed, 0.0f), 1.0f);
-        TargetSteering steering(sSettings.fLifterDistance);
+        TargetSteering steering(sSettings.getLifterDistance());
         steering.setSampleTime(1);
         float limit;
         if (!getUpOutputLimit(speed, limit))
@@ -2035,7 +2040,7 @@ public:
             pos = min(max(pos, 0.5f), 1.0f);
         }
 
-        long maxlen = sSettings.fLifterDistance;
+        long maxlen = sSettings.getLifterDistance();
         long target_ticks = pos * maxlen;
         bool success = false;
         float mpower = sSettings.fMinimumPower/100.0 + 0.05 + 0.1 * speed;
@@ -2880,16 +2885,22 @@ void processConfigureCommand(const char* cmd)
     }
     else if (startswith(cmd, "CONFIG"))
     {
-        Serial.print(F("ID#:             ")); Serial.println(sSettings.fID);
-        Serial.print(F("Baud Rate:       ")); Serial.println(sSettings.fBaudRate);
-        Serial.print(F("Rotary Disabled: ")); Serial.println(sSettings.fDisableRotary);
-        Serial.print(F("Min Power:       ")); Serial.println(sSettings.fMinimumPower);
-        Serial.print(F("Distance:        ")); Serial.println(sSettings.fLifterDistance);
-        Serial.print(F("Lifter Limit:    ")); Serial.println(sSettings.fLifterLimitSetting);
-        Serial.print(F("Rotary Limit:    ")); Serial.println(sSettings.fRotaryLimitSetting);
-        Serial.print(F("Up Calibrated:   ")); Serial.println(sSettings.fUpLimitsCalibrated);
-        Serial.print(F("Down Calibrated: ")); Serial.println(sSettings.fDownLimitsCalibrated);
-        Serial.print(F("Safety Maneuver: ")); Serial.println(sSettings.fSafetyManeuver);
+        Serial.print(F("ID#:               ")); Serial.println(sSettings.fID);
+        Serial.print(F("Baud Rate:         ")); Serial.println(sSettings.fBaudRate);
+        Serial.print(F("Rotary Disabled:   ")); Serial.println(sSettings.fDisableRotary);
+        Serial.print(F("Min Power:         ")); Serial.println(sSettings.fMinimumPower);
+        Serial.print(F("Distance:          ")); Serial.println(sSettings.getLifterDistance());
+        Serial.print(F("Lifter Limit:      ")); Serial.println(sSettings.fLifterLimitSetting);
+        Serial.print(F("Rotary Limit:      ")); Serial.println(sSettings.fRotaryLimitSetting);
+        Serial.print(F("Up Calibrated:     ")); Serial.println(sSettings.fUpLimitsCalibrated);
+        Serial.print(F("Lifter Min Power:  ")); Serial.print(sLifterParameters.fLifterMinPower);
+        Serial.print(F(" [")); Serial.print(sLifterParameters.fLifterMinSeekBotPower); Serial.println("]");
+        Serial.print(F("Rotary Min Power:  ")); Serial.println(sLifterParameters.fRotaryMinPower);
+        Serial.print(F("Lifter Distance:   ")); Serial.println(sLifterParameters.fLifterDistance);
+        Serial.print(F("Rotary Min Height: ")); Serial.println(sLifterParameters.fRotaryMinHeight);
+        Serial.print(F("Safety Maneuver:   ")); Serial.println(sSettings.fSafetyManeuver);
+        Serial.println("Stored Sequences:");
+        sSettings.listSortedCommands(Serial);
     }
     else if (startswith(cmd, "L"))
     {
@@ -3983,7 +3994,7 @@ void loop()
                 int(sLastTop),
                 int(sLastBot),
                 int(sLastRot),
-                int(sLastLifter/float(sSettings.fLifterDistance)*100.0),
+                int(sLastLifter/float(sSettings.getLifterDistance())*100.0),
                 int(lifter.rotaryMotorCurrentPosition()),
                 int(lifter.getRotaryPosition()),
                 int(lifter.lifterMotorFault()));
