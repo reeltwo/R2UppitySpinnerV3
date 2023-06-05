@@ -251,3 +251,13 @@ Animate periscope continously rotate/lift.
 
 	:M,80,80,2,4  (animate lifter 80% power, rotatary random(20%-80%), minimum interval 2 seconds for a duration of 2+random(4) seconds )
 	:M,50,40,5,5  (animate lifter 50% power, rotatary random(20%-40%) power, 80% minimum interval 5 seconds for a duration of 5+5 seconds )
+
+Pololu Motors:
+==============
+### 12V
+Lifter motor: https://www.pololu.com/product/4841
+Rotary motor: https://www.pololu.com/product/4847
+
+### 6V
+Lifter: https://www.pololu.com/product/4801
+Rotary: https://www.pololu.com/product/4807
