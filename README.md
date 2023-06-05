@@ -255,9 +255,13 @@ Animate periscope continously rotate/lift.
 Pololu Motors:
 ==============
 ### 12V
-Lifter motor: https://www.pololu.com/product/4841
-Rotary motor: https://www.pololu.com/product/4847
+<ul>
+<li>Lifter motor: https://www.pololu.com/product/4841</li>
+<li>Rotary motor: https://www.pololu.com/product/4847</li>
+</ul>
 
 ### 6V
-Lifter: https://www.pololu.com/product/4801
-Rotary: https://www.pololu.com/product/4807
+<ul>
+<li>Lifter motor: https://www.pololu.com/product/4801</li>
+<li>Rotary motor: https://www.pololu.com/product/4807</li>
+</ul>
