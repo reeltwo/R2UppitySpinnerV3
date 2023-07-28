@@ -1,27 +1,35 @@
 /*
  * --------------------------------------------------------------------
- * DomeControlFirmware (https://github.com/reeltwo/DomeControlFirmware)
+ * R2UppitySpinnerV3 (https://github.com/reeltwo/R2UppitySpinnerV3)
  * --------------------------------------------------------------------
  * Written by Mimir Reynisson (skelmir)
  *
- * DomeControlFirmware is free software; you can redistribute it and/or
+ * R2UppitySpinnerV3 is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
  * version 2.1 of the License, or (at your option) any later version.
  *
- * DomeControlFirmware is distributed in the hope that it will be useful,
+ * R2UppitySpinnerV3 is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
  * Lesser General Public License for more details.
  *
  * You should have received a copy of the GNU Lesser General Public
- * License along with DomeControlFirmware; if not, write to the Free Software
+ * License along with R2UppitySpinnerV3; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-parameter"
 #pragma GCC diagnostic ignored "-Wimplicit-fallthrough"
+
+#ifdef SOC_LEDC_SUPPORT_HS_MODE
+#define LEDC_CHANNELS           (SOC_LEDC_CHANNEL_NUM<<1)
+#else
+#define LEDC_CHANNELS           (SOC_LEDC_CHANNEL_NUM)
+#endif
+
+extern uint8_t channels_resolution[LEDC_CHANNELS];
 
 ///////////////////////////////////
 
@@ -181,7 +189,7 @@
 #endif
 #include "core/SetupEvent.h"
 #include "core/AnimatedEvent.h"
-#include "core/AnalogWrite.h"
+//#include "core/AnalogWrite.h"
 #include "encoder/PPMReader.h"
 #include "Wire.h"
 #ifdef USE_WIFI
@@ -416,6 +424,7 @@ EEPROMSettings<LifterSettings> sSettings;
 
 static bool sCalibrating;
 static bool sSafetyManeuver;
+static bool sSafetyManeuverFailed;
 static unsigned sRotaryCircleEncoderCount;
 
 static unsigned sPos;
@@ -657,8 +666,12 @@ public:
     {
         const auto output1{static_cast<int32_t>(abs(v1) * 255)};
         const auto output2{static_cast<int32_t>(abs(v2) * 255)};
+        // analogWrite(m1, output1, 255);
+        // analogWrite(m2, output2, 255);
         ::analogWrite(m1, output1);
         ::analogWrite(m2, output2);
+        // analogWrite(m1, v1);
+        // analogWrite(m2, v2);
     }
 
     ///////////////////////////////////
@@ -801,7 +814,7 @@ public:
         // Rotary motion not allowed
         return false;
     #else
-        return !sSettings.fDisableRotary && (getLifterPosition() > sLifterParameters.fRotaryMinHeight);
+        return !sSafetyManeuverFailed && !sSettings.fDisableRotary && (getLifterPosition() > sLifterParameters.fRotaryMinHeight);
     #endif
     }
 
@@ -868,7 +881,7 @@ public:
     #endif
     }
 
-    static void rotaryMotorMove(float throttle)
+    static void rotaryMotorMove(float throttle, bool skipSafety = false)
     {
     #ifndef DISABLE_ROTARY
         if (sSettings.fDisableRotary)
@@ -879,7 +892,7 @@ public:
             throttle = 0;
 
         // Ensure lifter is higher than minimum
-        if (rotaryAllowed())
+        if (rotaryAllowed() || skipSafety)
         {
             if (fRotaryThrottle != throttle)
             {
@@ -1279,6 +1292,11 @@ public:
         sPinManager.begin();
 
         setLightShow(kLightKit_Off);
+
+        // analogWriteFrequencyResolution(PIN_LIFTER_PWM1, 30000, 8);
+        // analogWriteFrequencyResolution(PIN_LIFTER_PWM2, 30000, 8);
+        // analogWriteFrequencyResolution(PIN_ROTARY_PWM1, 30000, 8);
+        // analogWriteFrequencyResolution(PIN_ROTARY_PWM2, 30000, 8);
     }
 
     ///////////////////////////////////
@@ -1383,12 +1401,119 @@ public:
         }
     }
 
+#undef INTERNAL_LIFTER_DEBUG
+#ifdef INTERNAL_LIFTER_DEBUG
+    static bool lifterMotorTest(float speed = 0.5, bool usePID = false)
+    {
+        if (!usePID)
+        {
+            float mpower = sSettings.fMinimumPower/100.0 + 0.05 + 0.1 * speed;
+            LifterStatus lifterStatus;
+            uint32_t startPos = getLifterPosition();
+            printf("startPos: %u\n", startPos);
+            for (;;)
+            {
+                if (Serial.available())
+                    break;
+                lifterMotorMove(mpower);
+                delay(3);
+                lifterMotorStop();
+                delay(1);
+                if (!lifterStatus.isMoving())
+                {
+                    Serial.println("ABORT");
+                    break;
+                }
+            }
+            uint32_t stopPos = getLifterPosition();
+            printf("stopPos: %u\n", stopPos);
+        }
+        Serial.read();
+        return false;
+    }
+
+    static bool rotaryMotorTest(float speed = 0.5, bool usePID = false)
+    {
+        // Find home position
+        if (!usePID)
+        {
+            RotaryStatus rotaryStatus;
+            long startPos = getRotaryPosition();
+            printf("startPos: %ld\n", startPos);
+
+            rotaryMotorMove(speed, true);
+            delay(200);
+
+            while (!rotaryHomeLimit())
+            {
+                // long rotaryPos = getRotaryPosition();
+                rotaryMotorMove(speed, true);
+                // uint32_t startMillis = millis();
+                // while (startMillis + 3 < millis())
+                // {
+                //     if (rotaryHomeLimit())
+                //         goto stop;
+                // }
+                // rotaryMotorStop();
+                // startMillis = millis();
+                // while (startMillis + 1 < millis() && !rotaryHomeLimit())
+                //     ;
+                if (!rotaryStatus.isMoving())
+                {
+                    DEBUG_PRINTLN("ABORT");
+                    break;
+                }
+            }
+        // stop:
+            sRotaryCircleEncoderCount = abs(getRotaryPosition());
+            long rotaryHomePos = getRotaryPosition();
+            // Active braking
+            // rotaryMotorMove((speed < 0) ? 1 : -1, true);
+            // delay((speed < 0) ? 3 : 10);
+            rotaryMotorStop();
+            delay(1000);
+
+            long stopPos = getRotaryPosition();
+            printf("home: %ld\n", rotaryHomePos);
+            printf("stopPos: %ld\n", stopPos);
+            printf("diff: %ld\n", abs(stopPos - rotaryHomePos));
+            printf("limit: %d\n", rotaryHomeLimit());
+        }
+        Serial.read();
+        return false;
+    }
+#endif
     static bool safetyManeuver()
     {
+    #ifdef INTERNAL_LIFTER_DEBUG
+        lifterMotorStop();
+        rotaryMotorStop();
+        for (int i = 0; i < LEDC_CHANNELS; i++)
+        {
+            printf("channel[%d]: %d\n", i, channels_resolution[i]);
+        }
+
+        if (!analogWriteFrequencyResolution(PIN_ROTARY_PWM1, 21762, 10))
+            printf("NOT SUPPORTED\n");
+        analogWriteFrequencyResolution(PIN_ROTARY_PWM2, 21762, 10);
+        rotaryMotorMove(-(ROTARY_MINIMUM_POWER/100.0), true);
+        delay(2000);
+        analogWriteFrequencyResolution(PIN_ROTARY_PWM1, 1000, 8);
+        analogWriteFrequencyResolution(PIN_ROTARY_PWM2, 1000, 8);
+        rotaryMotorMove(-(ROTARY_MINIMUM_POWER/100.0), true);
+        delay(2000);
+
+
+            // rotaryMotorTest((ROTARY_MINIMUM_POWER/100.0));
+        // }
+        rotaryMotorStop();
+        return false;
+    #endif
         // On startup we'll first seek to the top and make sure
         // that the rotary is in home position. Then seek back down.
         // This should safely clear any state the scope was in.
         Serial.println("SAFETY");
+        sSafetyManeuverFailed = false;
         if (seekToTop(0.8, false))
         {
         #ifndef DISABLE_SAFETY_MANEUVER
@@ -1501,13 +1626,20 @@ public:
             // Reset fLifterDistance length
             sSettings.fLifterDistance = 0;
             resetLifterPosition();
+        #ifdef INTERNAL_LIFTER_DEBUG
+            return false;
+        #else
             seekToBottom(false);
             sSafetyManeuver = lifterBottomLimit();
+            if (!sSafetyManeuver)
+                sSafetyManeuverFailed = true;
             return sSafetyManeuver;
+        #endif
         }
         else
         {
             DEBUG_PRINTLN("ABORT: FAILED SEEK TO TOP");
+            sSafetyManeuverFailed = true;
             return false;
         }
     }
@@ -2009,7 +2141,7 @@ public:
 
             if (!lifterStatus.isMoving())
             {
-                DEBUG_PRINT("LIFTER ABORTED AT "); DEBUG_PRINTLN(encoder_ticks);
+                printf("LIFTER ABORTED AT %ld (POWER=%f)\n", encoder_ticks, steering.getThrottle() * speed);
                 break;
             }
         }
@@ -2627,8 +2759,7 @@ bool processLifterCommand(const char* cmd)
             lifter.moveModeEnd();
 
             // return home
-            lifter.ensureSafetyManeuver();
-            if (!lifter.lifterBottomLimit())
+            if (lifter.ensureSafetyManeuver() && !lifter.lifterBottomLimit())
             {
                 uint32_t speed = sSettings.fMinimumPower;
                 lifter.rotateHome();
@@ -2885,20 +3016,22 @@ void processConfigureCommand(const char* cmd)
     }
     else if (startswith(cmd, "CONFIG"))
     {
-        Serial.print(F("ID#:               ")); Serial.println(sSettings.fID);
-        Serial.print(F("Baud Rate:         ")); Serial.println(sSettings.fBaudRate);
-        Serial.print(F("Rotary Disabled:   ")); Serial.println(sSettings.fDisableRotary);
-        Serial.print(F("Min Power:         ")); Serial.println(sSettings.fMinimumPower);
-        Serial.print(F("Distance:          ")); Serial.println(sSettings.getLifterDistance());
-        Serial.print(F("Lifter Limit:      ")); Serial.println(sSettings.fLifterLimitSetting);
-        Serial.print(F("Rotary Limit:      ")); Serial.println(sSettings.fRotaryLimitSetting);
-        Serial.print(F("Up Calibrated:     ")); Serial.println(sSettings.fUpLimitsCalibrated);
-        Serial.print(F("Lifter Min Power:  ")); Serial.print(sLifterParameters.fLifterMinPower);
+        Serial.print(F("ID#:                ")); Serial.println(sSettings.fID);
+        Serial.print(F("Baud Rate:          ")); Serial.println(sSettings.fBaudRate);
+        Serial.print(F("Rotary Disabled:    ")); Serial.println(sSettings.fDisableRotary);
+        Serial.print(F("Min Power:          ")); Serial.println(sSettings.fMinimumPower);
+        Serial.print(F("Distance:           ")); Serial.println(sSettings.getLifterDistance());
+        Serial.print(F("Lifter Limit:       ")); Serial.println(sSettings.fLifterLimitSetting);
+        Serial.print(F("Rotary Limit:       ")); Serial.println(sSettings.fRotaryLimitSetting);
+        Serial.print(F("Up Calibrated:      ")); Serial.println(sSettings.fUpLimitsCalibrated);
+        Serial.print(F("Lifter Min Power:   ")); Serial.print(sLifterParameters.fLifterMinPower);
         Serial.print(F(" [")); Serial.print(sLifterParameters.fLifterMinSeekBotPower); Serial.println("]");
-        Serial.print(F("Rotary Min Power:  ")); Serial.println(sLifterParameters.fRotaryMinPower);
-        Serial.print(F("Lifter Distance:   ")); Serial.println(sLifterParameters.fLifterDistance);
-        Serial.print(F("Rotary Min Height: ")); Serial.println(sLifterParameters.fRotaryMinHeight);
-        Serial.print(F("Safety Maneuver:   ")); Serial.println(sSettings.fSafetyManeuver);
+        Serial.print(F("Rotary Min Power:   ")); Serial.println(sLifterParameters.fRotaryMinPower);
+        Serial.print(F("Lifter Distance:    ")); Serial.println(sLifterParameters.fLifterDistance);
+        Serial.print(F("Rotary Min Height:  ")); Serial.println(sLifterParameters.fRotaryMinHeight);
+        Serial.print(F("Safety Maneuver:    ")); Serial.println(sSafetyManeuver);
+        if (sSafetyManeuverFailed)
+            Serial.print(F("Safety Maneuver FAILED"));
         Serial.println("Stored Sequences:");
         sSettings.listSortedCommands(Serial);
     }
@@ -3236,6 +3369,11 @@ bool processCommand(const char* cmd, bool firstCommand)
         if (cmd[0] != ':')
         {
             Serial.println("Invalid");
+            return false;
+        }
+        if (!sSafetyManeuver)
+        {
+            Serial.println("Safety maneuver failed");
             return false;
         }
         return processLifterCommand(cmd+1);

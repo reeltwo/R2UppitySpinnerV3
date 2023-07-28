@@ -61,7 +61,7 @@ public:
 
     virtual void render() override
     {
-        if (fValue != fDisplayValue)
+        if (fValue != fDisplayValue || sDisplay.needsRedisplay())
         {
             sDisplay.clearDisplay();
             sDisplay.setTextSize(4);
