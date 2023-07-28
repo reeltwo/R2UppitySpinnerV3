@@ -21,7 +21,7 @@ public:
 
     virtual void render() override
     {
-        if (millis() > fLastScreenUpdate + 100)
+        if (millis() > fLastScreenUpdate + 100 || sDisplay.needsRedisplay())
         {
             int16_t pos = lifter.rotaryMotorCurrentPosition();
             if (pos != fLastPos)
