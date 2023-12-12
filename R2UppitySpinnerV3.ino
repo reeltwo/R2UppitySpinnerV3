@@ -428,10 +428,12 @@ static bool sSafetyManeuverFailed;
 static unsigned sRotaryCircleEncoderCount;
 
 static unsigned sPos;
+static unsigned sCopyPos;
 static bool sProcessing;
 static bool sNextCommand;
 static uint32_t sWaitNextSerialCommand;
 static char sBuffer[CONSOLE_BUFFER_SIZE];
+static char sCopyBuffer[sizeof(sBuffer)+4];
 static bool sCmdNextCommand;
 static char sCmdBuffer[COMMAND_BUFFER_SIZE];
 static bool sRCMode;
@@ -3905,6 +3907,52 @@ static void updateSettings()
 
 ///////////////////////////////////////////////////////
 
+static int RememberSerialChar(int ch)
+{
+    if (ch == 0x0A || ch == 0x0D)
+    {
+        if (sCopyPos < SizeOfArray(sCopyBuffer)-4)
+        {
+            sCopyBuffer[sCopyPos] = '\\';
+            sCopyBuffer[sCopyPos+1] = '\\';
+            sCopyBuffer[sCopyPos+2] = (ch == 0x0A) ? 'n' : 'r';
+            sCopyBuffer[sCopyPos+3] = '\0';
+        }
+        sCopyPos = 0;
+    }
+    else if (ch == '\\')
+    {
+        if (sCopyPos < SizeOfArray(sCopyBuffer)-2)
+        {
+            sCopyBuffer[sCopyPos++] = ch;
+            sCopyBuffer[sCopyPos++] = ch;
+            sCopyBuffer[sCopyPos] = '\0';
+        }
+    }
+    else if (sCopyPos < SizeOfArray(sCopyBuffer)-1)
+    {
+        if (isprint(ch))
+        {
+            sCopyBuffer[sCopyPos++] = ch;
+            sCopyBuffer[sCopyPos] = '\0';
+        }
+        else if (sCopyPos < SizeOfArray(sCopyBuffer)-6)
+        {
+            int firstNibble = ch / 16;
+            int secondNibble = ch % 16;
+            sCopyBuffer[sCopyPos++] = '\\';
+            sCopyBuffer[sCopyPos++] = '\\';
+            sCopyBuffer[sCopyPos++] = 'x';
+            sCopyBuffer[sCopyPos++] = (firstNibble < 10) ? '0' + firstNibble : 'A' + (firstNibble - 10);
+            sCopyBuffer[sCopyPos++] = (secondNibble < 10) ? '0' + secondNibble : 'A' + (secondNibble - 10);
+            sCopyBuffer[sCopyPos] = '\0';
+        }
+    }
+    return ch;
+}
+
+///////////////////////////////////////////////////////
+
 void loop()
 {
 #ifdef USE_WIFI_WEB
@@ -3919,7 +3967,7 @@ void loop()
     // append commands to command buffer
     if (Serial.available())
     {
-        int ch = Serial.read();
+        int ch = RememberSerialChar(Serial.read());
         if (ch == 0x0A || ch == 0x0D)
         {
             runSerialCommand();
@@ -3934,7 +3982,7 @@ void loop()
     // Serial commands are processed in the same buffer as the console serial
     if (COMMAND_SERIAL.available())
     {
-        int ch = COMMAND_SERIAL.read();
+        int ch = RememberSerialChar(COMMAND_SERIAL.read());
         if (sPos != 0 || (ch == ':' || ch == '#'))
         {
             // Reduce serial noise by ignoring anything that doesn't start with : or #

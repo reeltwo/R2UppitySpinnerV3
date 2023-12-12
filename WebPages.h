@@ -148,6 +148,10 @@ WElement marcduinoContents[] = {
     WCheckbox("Marcduino on Wifi (port 2000)", "wifienabled",
         []() { return (marcWifiEnabled = (preferences.getBool(PREFERENCE_MARCWIFI_ENABLED, MARC_WIFI_ENABLED))); },
         [](bool val) { marcWifiEnabled = val; } ),
+    WLabel("Last Command:", "cmd"),
+    WTextFieldReadonly("", "received",
+        []()->String { return sCopyBuffer; },
+        []()->bool { return true; }),
     WButton("Save", "save", []() {
         preferences.putBool(PREFERENCE_MARCWIFI_ENABLED, marcWifiEnabled);
         if (marcID != sSettings.fID)
@@ -156,7 +160,7 @@ WElement marcduinoContents[] = {
         }
         if (marcBaudRate != sSettings.fBaudRate)
         {
-            sSettings.fID = marcBaudRate; sUpdateSettings = true;
+            sSettings.fBaudRate = marcBaudRate; sUpdateSettings = true;
         }
     }),
     WHorizontalAlign(),
