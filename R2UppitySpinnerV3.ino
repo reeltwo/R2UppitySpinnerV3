@@ -3965,17 +3965,31 @@ void loop()
     lifter.animate();
 
     // append commands to command buffer
+    //
+    // sBuffer belongs to the dispatcher below for as long as sProcessing is
+    // true — that spans the *entire* remaining lifetime of a chained command,
+    // including any :PW wait (up to tens of seconds), not just the moment the
+    // line was received. Appending newly-arrived bytes here while sProcessing
+    // is true used to graft them onto the tail of whatever's still pending
+    // (e.g. a foreign device sharing this UART trunk sending traffic mid-chain
+    // would silently corrupt an in-flight ":PW9:PH" remainder into garbage).
+    // Gate ingestion on !sProcessing so a chain finishes dispatching from a
+    // clean, untouched buffer; anything that arrives while busy is dropped
+    // rather than corrupting the command in flight.
     if (Serial.available())
     {
         int ch = RememberSerialChar(Serial.read());
-        if (ch == 0x0A || ch == 0x0D)
+        if (!sProcessing)
         {
-            runSerialCommand();
-        }
-        else if (sPos < SizeOfArray(sBuffer)-1)
-        {
-            sBuffer[sPos++] = ch;
-            sBuffer[sPos] = '\0';
+            if (ch == 0x0A || ch == 0x0D)
+            {
+                runSerialCommand();
+            }
+            else if (sPos < SizeOfArray(sBuffer)-1)
+            {
+                sBuffer[sPos++] = ch;
+                sBuffer[sPos] = '\0';
+            }
         }
     }
 #ifdef COMMAND_SERIAL
@@ -3983,7 +3997,7 @@ void loop()
     if (COMMAND_SERIAL.available())
     {
         int ch = RememberSerialChar(COMMAND_SERIAL.read());
-        if (sPos != 0 || (ch == ':' || ch == '#'))
+        if (!sProcessing && (sPos != 0 || (ch == ':' || ch == '#')))
         {
             // Reduce serial noise by ignoring anything that doesn't start with : or #
             printf("ch: %c [%d]\n", ch, ch);
